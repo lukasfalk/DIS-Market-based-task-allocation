@@ -8,8 +8,8 @@ WorldInfo {
   title "Lab05 Threshold"
 }
 Viewpoint {
-  orientation -0.39699618006400056 0.35871091714350967 0.844819809744453 1.7256988872653751
-  position -0.056008941629719894 -1.687252806778848 1.973821072058447
+  orientation -0.5519691321889433 0.5485107475404396 0.6280653126412993 1.946730019443532
+  position -0.1894662809596591 -0.4934934217432805 3.1154303613245244
 }
 Background {
   skyColor [
@@ -66,25 +66,25 @@ PointLight {
 Robot {
   children [
     DEF emitter Emitter {
-      channel 1
+      channel 5
     }
     DEF rec1 Receiver {
       name "rec1"
-      channel 1
+      channel 2
     }
     DEF rec2 Receiver {
       name "rec2"
-      channel 2
+      channel 3
       baudRate 960000
     }
     DEF rec3 Receiver {
       name "rec3"
-      channel 3
+      channel 4
       baudRate 960000
     }
     DEF rec4 Receiver {
       name "rec4"
-      channel 4
+      channel 5
       baudRate 960000
     }
     DEF rec5 Receiver {
@@ -114,15 +114,16 @@ Robot {
     }
     DEF rec0 Receiver {
       name "rec0"
+      channel 1
       baudRate 960000
     }
   ]
   name "supervisor"
-  controller "supervisor"
+  controller "auct_super"
   supervisor TRUE
 }
 DEF e0 Transform {
-  translation 0.28 0.13 0
+  translation 0 0 -0.14
   scale 0.5 0.5 0.5
   children [
     Shape {
@@ -139,7 +140,7 @@ DEF e0 Transform {
   ]
 }
 DEF e1 Transform {
-  translation -0.28 0.43 0
+  translation 0 0 -0.14
   scale 0.5 0.5 0.5
   children [
     Shape {
@@ -156,7 +157,7 @@ DEF e1 Transform {
   ]
 }
 DEF e2 Transform {
-  translation -0.38 -0.39 0
+  translation 0 0 -0.14
   scale 0.5 0.5 0.5
   children [
     Shape {
@@ -175,7 +176,7 @@ DEF e2 Transform {
   ]
 }
 DEF e3 Transform {
-  translation 0.04 -0.18 0
+  translation 0 0 -0.14
   scale 0.5 0.5 0.5
   children [
     Shape {
@@ -192,7 +193,7 @@ DEF e3 Transform {
   ]
 }
 DEF e4 Transform {
-  translation 0.39 -0.41 0
+  translation 0 0 -0.14
   scale 0.5 0.5 0.5
   children [
     Shape {
@@ -209,7 +210,7 @@ DEF e4 Transform {
   ]
 }
 DEF e5 Transform {
-  translation -0.46 0.15 0
+  translation 0 0 -0.14
   scale 0.5 0.5 0.5
   children [
     Shape {
@@ -226,7 +227,7 @@ DEF e5 Transform {
   ]
 }
 DEF e6 Transform {
-  translation -0.22 -0.21 0
+  translation 0 0 -0.14
   scale 0.5 0.5 0.5
   children [
     Shape {
@@ -243,7 +244,7 @@ DEF e6 Transform {
   ]
 }
 DEF e7 Transform {
-  translation 0.38 0.41 0
+  translation 0 0 -0.14
   scale 0.5 0.5 0.5
   children [
     Shape {
@@ -260,7 +261,7 @@ DEF e7 Transform {
   ]
 }
 DEF e8 Transform {
-  translation 0.1 -0.46 0
+  translation 0 0 -0.14
   scale 0.5 0.5 0.5
   children [
     Shape {
@@ -277,7 +278,7 @@ DEF e8 Transform {
   ]
 }
 DEF e9 Transform {
-  translation -0.16 0.2 0
+  translation 0 0 -0.14
   scale 0.5 0.5 0.5
   children [
     Shape {
@@ -293,28 +294,36 @@ DEF e9 Transform {
     }
   ]
 }
-epuck_rangeColA {
+DEF e-puck0 epuck_rangeColA {
   translation 0.459002 0.06 8.03486e-05
-  name "e-puck1"
-  controller "braitenberg"
+  name "e-puck0"
+  controller "epuck_crown"
 }
-epuck_rangeColA {
+DEF e-puck1 epuck_rangeColA {
   translation -0.44 -0.15 -6.39625e-05
-  name "e-puck2"
-  controller "braitenberg"
+  name "e-puck1"
+  controller "epuck_crown"
+  emitter_channel 2
+  receiver_channel 2
 }
-epuck_rangeColB {
+DEF e-puck2 epuck_rangeColB {
   translation 0.18 -0.34 -6.39615e-05
-  name "e-puck3"
-  controller "braitenberg"
+  name "e-puck2"
+  controller "epuck_crown"
+  emitter_channel 3
+  receiver_channel 3
 }
-epuck_rangeColB {
+DEF e-puck3 epuck_rangeColB {
   translation -0.1 0.41 -6.3962e-05
-  name "e-puck4"
-  controller "braitenberg"
+  name "e-puck3"
+  controller "epuck_crown"
+  emitter_channel 4
+  receiver_channel 4
 }
-epuck_rangeColB {
-  translation 9.921458359717937e-11 1.7762698410103202e-11 -6.396198619608787e-05
-  name "e-puck5"
-  controller "braitenberg"
+DEF e-puck4 epuck_rangeColB {
+  translation -0.576769 0.594344 -6.3962e-05
+  name "e-puck4"
+  controller "epuck_crown"
+  emitter_channel 5
+  receiver_channel 5
 }
