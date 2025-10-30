@@ -1,0 +1,324 @@
+#VRML_SIM R2022a utf8
+WorldInfo {
+  info [
+    "The model of the Khepera III robot"
+    "Author: Simon Blanchoud"
+    "Date: 26 SEP 2006"
+  ]
+  title "Lab05 Threshold"
+}
+Viewpoint {
+  orientation -0.3925691481797664 0.39602460315130716 0.8300927524055746 1.6335550313275562
+  position 0.0037448955306756335 -1.9791478903846578 2.056049175534246
+}
+Background {
+  skyColor [
+    0.15 0.15 0.15
+  ]
+}
+RectangleArena {
+  rotation 0 0 1 1.5707963267948966
+  floorSize 1.25 1.25
+}
+Solid {
+  translation 0.125 0.225 0
+  rotation 0 0 1 1.57079
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.5 0.5 0.5
+        }
+      }
+      geometry Box {
+        size 0.85 0.01 0.1
+      }
+    }
+  ]
+  name "wall2"
+}
+Solid {
+  translation -0.45 0 0
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.5 0.5 0.5
+        }
+      }
+      geometry Box {
+        size 0.375 0.01 0.1
+      }
+    }
+  ]
+  name "wall1"
+}
+PointLight {
+  attenuation 0 0 0.5
+  intensity 0.5
+  location 0.55 -0.14 0.6
+}
+PointLight {
+  attenuation 0 0 0.5
+  intensity 0.5
+  location -0.5 0.43 0.6
+}
+Robot {
+  children [
+    DEF emitter Emitter {
+      channel 1
+    }
+    DEF rec1 Receiver {
+      name "rec1"
+      channel 1
+    }
+    DEF rec2 Receiver {
+      name "rec2"
+      channel 2
+      baudRate 960000
+    }
+    DEF rec3 Receiver {
+      name "rec3"
+      channel 3
+      baudRate 960000
+    }
+    DEF rec4 Receiver {
+      name "rec4"
+      channel 4
+      baudRate 960000
+    }
+    DEF rec5 Receiver {
+      name "rec5"
+      channel 5
+      baudRate 960000
+    }
+    DEF rec6 Receiver {
+      name "rec6"
+      channel 6
+      baudRate 960000
+    }
+    DEF rec7 Receiver {
+      name "rec7"
+      channel 7
+      baudRate 960000
+    }
+    DEF rec8 Receiver {
+      name "rec8"
+      channel 8
+      baudRate 960000
+    }
+    DEF rec9 Receiver {
+      name "rec9"
+      channel 9
+      baudRate 960000
+    }
+    DEF rec0 Receiver {
+      name "rec0"
+      baudRate 960000
+    }
+  ]
+  name "supervisor"
+  controller "supervisor"
+  supervisor TRUE
+}
+DEF e0 Transform {
+  translation 0.28 0.13 0
+  scale 0.5 0.5 0.5
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0 0 1
+        }
+      }
+      geometry Cylinder {
+        height 0.1
+        radius 0.05
+      }
+    }
+  ]
+}
+DEF e1 Transform {
+  translation -0.28 0.43 0
+  scale 0.5 0.5 0.5
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0 0 1
+        }
+      }
+      geometry Cylinder {
+        height 0.1
+        radius 0.05
+      }
+    }
+  ]
+}
+DEF e2 Transform {
+  translation -0.38 -0.39 0
+  scale 0.5 0.5 0.5
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          ambientIntensity 0.5
+          diffuseColor 0 0 1
+          shininess 0.5
+        }
+      }
+      geometry Cylinder {
+        height 0.1
+        radius 0.05
+      }
+    }
+  ]
+}
+DEF e3 Transform {
+  translation 0.04 -0.18 0
+  scale 0.5 0.5 0.5
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0 0 1
+        }
+      }
+      geometry Cylinder {
+        height 0.1
+        radius 0.05
+      }
+    }
+  ]
+}
+DEF e4 Transform {
+  translation 0.39 -0.41 0
+  scale 0.5 0.5 0.5
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0 0 1
+        }
+      }
+      geometry Cylinder {
+        height 0.1
+        radius 0.05
+      }
+    }
+  ]
+}
+DEF e5 Transform {
+  translation -0.46 0.15 0
+  scale 0.5 0.5 0.5
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0 0 1
+        }
+      }
+      geometry Cylinder {
+        height 0.1
+        radius 0.05
+      }
+    }
+  ]
+}
+DEF e6 Transform {
+  translation -0.22 -0.21 0
+  scale 0.5 0.5 0.5
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 1 0 0
+        }
+      }
+      geometry Cylinder {
+        height 0.1
+        radius 0.05
+      }
+    }
+  ]
+}
+DEF e7 Transform {
+  translation 0.38 0.41 0
+  scale 0.5 0.5 0.5
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 1 0 0
+        }
+      }
+      geometry Cylinder {
+        height 0.1
+        radius 0.05
+      }
+    }
+  ]
+}
+DEF e8 Transform {
+  translation 0.1 -0.46 0
+  scale 0.5 0.5 0.5
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 1 0 0
+        }
+      }
+      geometry Cylinder {
+        height 0.1
+        radius 0.05
+      }
+    }
+  ]
+}
+DEF e9 Transform {
+  translation -0.16 0.2 0
+  scale 0.5 0.5 0.5
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 1 0 0
+        }
+      }
+      geometry Cylinder {
+        height 0.1
+        radius 0.05
+      }
+    }
+  ]
+}
+epuck_range {
+  translation 0.459002 0.06 8.03486e-05
+  rotation 2.5328875497210855e-06 -0.9999999999717659 -7.074790640191939e-06 0.000962939036823482
+  controller "e-puck"
+}
+epuck_range {
+  translation -0.44 -0.15 -6.39625e-05
+  rotation 0.6827272638098751 -0.7306733081546841 9.856302523928403e-07 3.578580787255785e-09
+  name "e-puck(1)"
+  controller "e-puck"
+}
+epuck_range {
+  translation 0.18 -0.34 -6.39615e-05
+  rotation 0.6827287797539088 -0.7306718916823538 -1.0341736665017168e-06 3.578585231465048e-09
+  name "e-puck(2)"
+  controller "e-puck"
+}
+epuck_range {
+  translation -0.1 0.41 -6.3962e-05
+  rotation 0.682725681247687 -0.7306747868661172 -1.7424514968735983e-06 3.578578181166109e-09
+  name "e-puck(3)"
+  controller "e-puck"
+}
+epuck_range {
+  translation 9.921458359717937e-11 1.7762698410103202e-11 -6.396198619608787e-05
+  rotation 0.6827253339456953 -0.7306751113787674 -6.038461811196375e-07 3.5785772366067095e-09
+  name "e-puck(4)"
+  controller "e-puck"
+}
