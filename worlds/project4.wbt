@@ -8,8 +8,8 @@ WorldInfo {
   title "Lab05 Threshold"
 }
 Viewpoint {
-  orientation -0.3925691481797664 0.39602460315130716 0.8300927524055746 1.6335550313275562
-  position 0.0037448955306756335 -1.9791478903846578 2.056049175534246
+  orientation -0.39699618006400056 0.35871091714350967 0.844819809744453 1.7256988872653751
+  position -0.056008941629719894 -1.687252806778848 1.973821072058447
 }
 Background {
   skyColor [
@@ -293,32 +293,28 @@ DEF e9 Transform {
     }
   ]
 }
-epuck_range {
+epuck_rangeColA {
   translation 0.459002 0.06 8.03486e-05
-  rotation 2.5328875497210855e-06 -0.9999999999717659 -7.074790640191939e-06 0.000962939036823482
-  controller "e-puck"
+  name "e-puck1"
+  controller "braitenberg"
 }
-epuck_range {
+epuck_rangeColA {
   translation -0.44 -0.15 -6.39625e-05
-  rotation 0.6827272638098751 -0.7306733081546841 9.856302523928403e-07 3.578580787255785e-09
-  name "e-puck(1)"
-  controller "e-puck"
+  name "e-puck2"
+  controller "braitenberg"
 }
-epuck_range {
+epuck_rangeColB {
   translation 0.18 -0.34 -6.39615e-05
-  rotation 0.6827287797539088 -0.7306718916823538 -1.0341736665017168e-06 3.578585231465048e-09
-  name "e-puck(2)"
-  controller "e-puck"
+  name "e-puck3"
+  controller "braitenberg"
 }
-epuck_range {
+epuck_rangeColB {
   translation -0.1 0.41 -6.3962e-05
-  rotation 0.682725681247687 -0.7306747868661172 -1.7424514968735983e-06 3.578578181166109e-09
-  name "e-puck(3)"
-  controller "e-puck"
+  name "e-puck4"
+  controller "braitenberg"
 }
-epuck_range {
+epuck_rangeColB {
   translation 9.921458359717937e-11 1.7762698410103202e-11 -6.396198619608787e-05
-  rotation 0.6827253339456953 -0.7306751113787674 -6.038461811196375e-07 3.5785772366067095e-09
-  name "e-puck(4)"
-  controller "e-puck"
+  name "e-puck5"
+  controller "braitenberg"
 }
