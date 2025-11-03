@@ -85,6 +85,7 @@ public:
   uint16_t id_;          //event id
   Point2d pos_;          //event pos
   WbNodeRef node_;       //event node ref
+  uint16_t event_type_;   //type of event (A or B)
   uint16_t assigned_to_; //id of the robot that will handle this event
 
   // Auction data
@@ -97,12 +98,12 @@ public:
 
 // Public functions
 public:
-  //Event creation
-  Event(uint16_t id) : id_(id), pos_(rand_coord(), rand_coord()),
+  //Event creation //1/3 of the time it is A, 2/3 of the time it is B
+  Event(uint16_t id) : id_(id), pos_(rand_coord(), rand_coord()), event_type_(RAND < (1.0f/3.0f) ? 'A' : 'B'),
     assigned_to_(-1), t_announced_(-1), best_bidder_(-1), best_bid_(0.0), t_done_(-1)
   {
     node_ = g_event_nodes_free.back();  // Place node
-    g_event_nodes_free.pop_back();
+    g_event_nodes_free.pop_back(); //remove the "free" node from the free list
     
     double event_node_pos[3];           // Place event in arena
     event_node_pos[0] = pos_.x;
@@ -111,6 +112,48 @@ public:
     wb_supervisor_field_set_sf_vec3f(
       wb_supervisor_node_get_field(node_,"translation"),
       event_node_pos);
+
+      bool color_set = false;//Give the new event a color depending on its type
+      double red[3] = {1.0, 0.0, 0.0};
+      double blue[3] = {0.0, 0.0, 1.0};
+      WbFieldRef f_children = wb_supervisor_node_get_field(node_, "children");
+      if (f_children && wb_supervisor_field_get_count(f_children) > 0) {
+        WbNodeRef shape = wb_supervisor_field_get_mf_node(f_children, 0);
+        if (shape) {
+          WbFieldRef f_appearance = wb_supervisor_node_get_field(shape, "appearance");
+          if (f_appearance) {
+            WbNodeRef appearance = wb_supervisor_field_get_sf_node(f_appearance);
+            if (appearance) {
+              WbFieldRef f_material = wb_supervisor_node_get_field(appearance, "material");
+              if (f_material) {
+                WbNodeRef material = wb_supervisor_field_get_sf_node(f_material);
+                if (material) {
+                  // Most Material nodes expose 'diffuseColor' (SFColor)
+                  WbFieldRef f_color = wb_supervisor_node_get_field(material, "diffuseColor");
+                  if (f_color) {
+                    if (event_type_ == 'A') //If event type A, color red
+                      wb_supervisor_field_set_sf_color(f_color, red);
+                    else //If event type B, color blue
+                      wb_supervisor_field_set_sf_color(f_color, blue);
+                    color_set = true;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+        if (!color_set) {
+          // Fallback: try a direct 'color' field (if some PROTO used it) or just warn
+          WbFieldRef f_color_direct = wb_supervisor_node_get_field(node_, "color");
+          if (f_color_direct)
+            wb_supervisor_field_set_sf_color(f_color_direct, red);
+          else
+            DBG(("Warning: couldn't set event node color (no material/color field)\n"));
+        }
+        
+
+
   }
 
   bool is_assigned() const { return assigned_to_ != (uint16_t) -1; }
