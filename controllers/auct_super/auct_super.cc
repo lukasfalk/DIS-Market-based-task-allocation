@@ -248,7 +248,7 @@ private:
     wb_receiver_set_channel(receivers_[id], id+1);
   }
 
-  // Assemble a new message to be sent to robots
+  // Assemble a new message to be sent to robots (added type of event)
   void buildMessage(uint16_t robot_id, const Event* event,
       message_event_state_t event_state, message_t* msg) {
     WbFieldRef f_rot = wb_supervisor_node_get_field(robots_[robot_id],
@@ -265,6 +265,7 @@ private:
     msg->event_id = -1;
     msg->event_x = 0.0;
     msg->event_y = 0.0;
+    msg->event_type = ' '; //null declaration of event type
 
     if (event) {
       assert(event_state != MSG_EVENT_INVALID && 
@@ -273,6 +274,7 @@ private:
       msg->event_x = event->pos_.x;
       msg->event_y = event->pos_.y;
       msg->event_index = event->bidder_index;
+      msg->event_type = event->event_type_;
     }
   }
 

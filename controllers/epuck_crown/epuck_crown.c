@@ -86,6 +86,27 @@ float buff[99];             // Buffer for physics plugin
 
 double stat_max_velocity;
 
+// Pause control: when clock < pause_until the robot stays paused
+int pause_until = 0;
+int pause_active = 0;
+
+// return pause duration (ms) based on robot id and event type (customize as needed)
+static int get_pause_duration_ms(uint16_t rid, uint16_t event_type) {
+    if (event_type == 'A'){
+        if (rid==0 || rid==1){
+            return 3000; //robot A performing task A
+        } else {
+            return 9000; //robot B performing task A
+        }
+    } else if (event_type == 'B'){
+        if (rid==0 || rid==1){
+            return 5000; //robot A performing task B
+        } else {
+            return 1000; //robot B performing task B
+        }
+    }
+}
+
 
 // Proximity and radio handles
 WbDeviceTag emitter_tag, receiver_tag;
@@ -177,7 +198,16 @@ static void receive_updates()
             }
             // adjust target list length
             if(target_list_length-1 == 0) target_valid = 0; //used in general state machine 
-            target_list_length = target_list_length-1;    
+            target_list_length = target_list_length-1;
+            // --- NEW: stop and pause based on robot type and event type ---
+            // stop motors immediately
+            wb_motor_set_velocity(left_motor, 0.0);
+            wb_motor_set_velocity(right_motor, 0.0);
+            // set pause deadline (clock is in ms)
+            pause_until = clock + get_pause_duration_ms(robot_id, msg.event_type);
+            pause_active = 1;
+            state = STAY;
+            
         }
         else if(msg.event_state == MSG_EVENT_WON)
         {
@@ -310,6 +340,8 @@ void reset(void)
 
     clock = 0;
     indx = 0;
+    pause_until = 0;
+    pause_active = 0;
     
     // Init target positions to "INVALID"
     for(i=0;i<99;i++){ 
@@ -467,31 +499,45 @@ void run(int ms)
     // Get info from supervisor
     receive_updates();
 
-    // State may change because of obstacles
-    update_state(sum_distances);
-
-    // Set wheel speeds depending on state
-    switch (state) {
-        case STAY:
+    // If we are paused, keep stopped until deadline
+    if (pause_active) {
+        if (clock < pause_until) {
+            // enforce stop (motors set later from msl/msr)
             msl = 0;
             msr = 0;
-            break;
+        } else {
+            // pause expired -> resume normal behavior
+            pause_active = 0;
+        }
+    }
 
-        case GO_TO_GOAL:
-            compute_go_to_goal(&msl, &msr);
-            break;
+    // Set wheel speeds depending on state
+    if (!pause_active) {
+        // State may change because of obstacles
+        update_state(sum_distances);
 
-        case OBSTACLE_AVOID:
-            compute_avoid_obstacle(&msl, &msr, distances);
-            break;
+        switch (state) {
+            case STAY:
+                msl = 0;
+                msr = 0;
+                break;
 
-        case RANDOM_WALK:
-            msl = 400;
-            msr = 400;
-            break;
+            case GO_TO_GOAL:
+                compute_go_to_goal(&msl, &msr);
+                break;
 
-        default:
-            printf("Invalid state: robot_id %d \n", robot_id);
+            case OBSTACLE_AVOID:
+                compute_avoid_obstacle(&msl, &msr, distances);
+                break;
+
+            case RANDOM_WALK:
+                msl = 400;
+                msr = 400;
+                break;
+
+            default:
+                printf("Invalid state: robot_id %d \n", robot_id);
+        }
     }
     // Set the speed
     msl_w = msl*MAX_SPEED_WEB/1000;
