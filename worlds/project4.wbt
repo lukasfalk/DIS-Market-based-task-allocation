@@ -8,8 +8,8 @@ WorldInfo {
   title "Lab05 Threshold"
 }
 Viewpoint {
-  orientation -0.5519691321889433 0.5485107475404396 0.6280653126412993 1.946730019443532
-  position -0.1894662809596591 -0.4934934217432805 3.1154303613245244
+  orientation -0.49780924380009167 0.45883713651793023 0.7359717650421156 1.8614965681719615
+  position -0.1251408754420018 -1.374300437461032 2.8472236460626528
 }
 Background {
   skyColor [
@@ -65,7 +65,8 @@ PointLight {
 }
 Robot {
   children [
-    DEF emitter Emitter {
+    DEF sup_emitter Emitter {
+      name "sup_emitter"
       channel 5
     }
     DEF rec1 Receiver {

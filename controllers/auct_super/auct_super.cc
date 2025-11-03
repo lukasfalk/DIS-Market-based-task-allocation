@@ -45,9 +45,9 @@ using namespace std;
 
 // Parameters that can be changed
 #define NUM_ROBOTS 5                 // Change this also in the epuck_crown.c!
-#define NUM_ACTIVE_EVENTS 10          // number of active events
-#define TOTAL_EVENTS_TO_HANDLE  999   // Events after which simulation stops or...
-#define MAX_RUNTIME (3*60*1000)      // 3 minutes runtime
+#define NUM_ACTIVE_EVENTS 5          // number of active events
+#define TOTAL_EVENTS_TO_HANDLE  50   // Events after which simulation stops or...
+#define MAX_RUNTIME (3*60*1000)      // ...total runtime after which simulation stops
 //
 
 WbNodeRef g_event_nodes[MAX_EVENTS];
@@ -68,7 +68,7 @@ double gauss(void)
 
 double rand_coord() {
   // return -1.0 + 2.0*RAND;
-  return -0.55 + 1.1*RAND;
+  return -0.55 + 0.95*RAND; //Full arena of final project
 }
 
 double expovariate(double mu) {
@@ -242,7 +242,7 @@ private:
   void setRobotPos(uint16_t robot_id, double x, double y) {
     WbFieldRef f_pos = wb_supervisor_node_get_field(robots_[robot_id],
       "translation");
-    double pos[3] = {x, y, 0.001};
+    double pos[3] = {x, y, 0.01};
     return wb_supervisor_field_set_sf_vec3f(f_pos, pos);
   }
 
@@ -344,17 +344,14 @@ public:
     for (int i=0;i<NUM_ROBOTS;i++) {
       linkRobot(i);
 
-      //double pos[2] = {rand_coord(), rand_coord()};
-      const double* robot_pos = getRobotPos(i);
-      DBG(("Robot %d pos: [%f,%f]\n", i, robot_pos[0], robot_pos[1]));
-      //setRobotPos(i, robot_pos[0], robot_pos[1]);
-      stat_robot_prev_pos_[i][0] = robot_pos[0];
-      stat_robot_prev_pos_[i][1] = robot_pos[1];
+      double pos[2] = {rand_coord(), rand_coord()};
+      setRobotPos(i, pos[0], pos[1]);
+      stat_robot_prev_pos_[i][0] = pos[0];
+      stat_robot_prev_pos_[i][1] = pos[1];
     }
 
     // initialize the emitter
-    //emitter_ = wb_robot_get_device("sup_emitter"); //THIS IS ORIGINAL NAME FROM LAB05
-    emitter_ = wb_robot_get_device("emitter"); //Our version of emitter name
+    emitter_ = wb_robot_get_device("sup_emitter");
     if (!emitter_) {
       DBG(("Missing supervisor emitter!\n"));
       exit(1);
@@ -384,9 +381,9 @@ public:
     for (int i=0;i<NUM_ROBOTS;i++) {
       // Check if we're receiving data
       if (wb_receiver_get_queue_length(receivers_[i]) > 0) {
-        printf("Supervisor detected message in receiver for robot %d\n", i);
         assert(wb_receiver_get_queue_length(receivers_[i]) > 0);
         assert(wb_receiver_get_data_size(receivers_[i]) == sizeof(bid_t));
+        
         pbid = (bid_t*) wb_receiver_get_data(receivers_[i]); 
         assert(pbid->robot_id == i);
 

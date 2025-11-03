@@ -30,6 +30,8 @@ WbDeviceTag right_motor; //handler for the right wheel of the robot
 
 
 #define DEBUG 1
+#define DBG(x) printf x
+
 #define TIME_STEP           64      // Timestep (ms)
 #define RX_PERIOD           2    // time difference between two received elements (ms) (1000)
 
@@ -48,7 +50,7 @@ WbDeviceTag right_motor; //handler for the right wheel of the robot
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 /* Collective decision parameters */
 
-#define STATECHANGE_DIST 500   // minimum value of all sensor inputs combined to change to obstacle avoidance mode
+#define STATECHANGE_DIST 10 // minimum value of all sensor inputs combined to change to obstacle avoidance mode
 
 typedef enum {
     STAY            = 1,
@@ -138,7 +140,6 @@ static void receive_updates()
         i = 0;
         while(target[i][2] != INVALID){ i++;}
         target_list_length = i;  
-        printf("target_list_lengthWHAA: %d\n", target_list_length);
         
         if(target_list_length == 0) target_valid = 0;   
 
@@ -214,7 +215,6 @@ static void receive_updates()
             ///*** SIMPLE TACTIC ***///
             indx = target_list_length;
             double d = dist(my_pos[0], my_pos[1], msg.event_x, msg.event_y);
-            printf("Robot %d received auction for event %d at distance %f\n", robot_id, msg.event_id, d);
             ///*** END SIMPLE TACTIC ***///
                 
 
@@ -247,10 +247,9 @@ static void receive_updates()
             ///*** END BEST TACTIC ***///
                 
             // Send my bid to the supervisor
-            printf("robotid %d indx %d\n", robot_id, indx);
             const bid_t my_bid = {robot_id, msg.event_id, d, indx};
+            //DBG(("bidding robot %d for event %d with value %.2f at index %d\n", robot_id, msg.event_id, d, indx));
             wb_emitter_set_channel(emitter_tag, robot_id+1);
-            //printf("Robot %d sending bid for event %d with value %f at index %d\n", robot_id, msg.event_id, d, indx);
             wb_emitter_send(emitter_tag, &my_bid, sizeof(bid_t));            
         }
     }
@@ -404,11 +403,12 @@ void compute_avoid_obstacle(int *msl, int *msr, int distances[])
 {
     int d1=0,d2=0;       // motor speed 1 and 2     
     int sensor_nb;       // FOR-loop counters    
+    const int sensor_sensitivity = 300; // Not sure what this does
 
     for(sensor_nb=0;sensor_nb<NB_SENSORS;sensor_nb++)
     {   
-       d1 += (distances[sensor_nb]-300) * Interconn[sensor_nb];
-       d2 += (distances[sensor_nb]-300) * Interconn[sensor_nb + NB_SENSORS];
+       d1 += (distances[sensor_nb]-sensor_sensitivity) * Interconn[sensor_nb];
+       d2 += (distances[sensor_nb]-sensor_sensitivity) * Interconn[sensor_nb + NB_SENSORS];
     }
     d1 /= 80; d2 /= 80;  // Normalizing speeds
 
