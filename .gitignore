@@ -1,0 +1,5 @@
+# Ignore build directories inside each controller folder
+# E.g. controllers/auct_super/build/
+controllers/*/build/
+# And nested build directories under controllers (defensive)
+controllers/**/build/
