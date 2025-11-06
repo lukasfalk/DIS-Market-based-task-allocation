@@ -3,3 +3,9 @@
 controllers/*/build/
 # And nested build directories under controllers (defensive)
 controllers/**/build/
+*.exe
+*.wbproj
+*.wbproj
+*.wbproj
+worlds/.project4.wbproj
+*.wbproj

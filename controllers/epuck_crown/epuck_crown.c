@@ -414,11 +414,11 @@ void update_self_motion(int msl, int msr) {
 void compute_avoid_obstacle(int* msl, int* msr, int distances[]) {
     int d1 = 0, d2 = 0;                  // motor speed 1 and 2
     int sensor_nb;                       // FOR-loop counters
-    const int sensor_sensitivity = 300;  // Not sure what this does
+    const int sensor_sensitivity = 50;  // Not sure what this does
 
     for (sensor_nb = 0; sensor_nb < NB_SENSORS; sensor_nb++) {
-        d1 += (distances[sensor_nb] - sensor_sensitivity) * Interconn[sensor_nb];
-        d2 += (distances[sensor_nb] - sensor_sensitivity) * Interconn[sensor_nb + NB_SENSORS];
+        d1 += (distances[sensor_nb] - sensor_sensitivity) * Interconn[sensor_nb] * 5;
+        d2 += (distances[sensor_nb] - sensor_sensitivity) * Interconn[sensor_nb + NB_SENSORS] * 5;
     }
     d1 /= 80;
     d2 /= 80;  // Normalizing speeds
