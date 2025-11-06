@@ -57,6 +57,17 @@ class Point2d {
             return sqrt( (x-p.x)*(x-p.x) + (y-p.y)*(y-p.y) );
         }
 
+        //! \brief distance from point "p" to wall segment with endpoints "a" and "b"
+        double DistanceToSegment(Point2d p, Point2d a, Point2d b){
+            double l2 = a.Distance(b) * a.Distance(b);
+            if (l2 == 0.0) return p.Distance(a);   // a == b case
+            double t = ((p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y)) / l2;
+            if (t < 0.0) return p.Distance(a);
+            if (t > 1.0) return p.Distance(b);
+            Point2d projection(a.x + t * (b.x - a.x), a.y + t * (b.y - a.y));
+            return p.Distance(projection);
+        }
+
         //! \brief angle to another Point2d
         double Angle(Point2d p)
         {

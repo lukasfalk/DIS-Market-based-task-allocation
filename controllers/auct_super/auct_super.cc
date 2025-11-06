@@ -42,13 +42,15 @@ using namespace std;
 #define EVENT_GENERATION_DELAY (1000)  // average time between events ms (expo distribution)
 
 #define GPS_INTERVAL (500)
+#define PROXIMITY_THRESHOLD (0.20)  // distance below which robots are considered in collision
 
 // Parameters that can be changed
 #define NUM_ROBOTS 5                 // Change this also in the epuck_crown.c!
 #define NUM_ACTIVE_EVENTS 5          // number of active events
 #define TOTAL_EVENTS_TO_HANDLE 50    // Events after which simulation stops or...
 #define MAX_RUNTIME (3 * 60 * 1000)  // ...total runtime after which simulation stops
-//
+
+#define MAX_WALLS 2
 
 WbNodeRef g_event_nodes[MAX_EVENTS];
 vector<WbNodeRef> g_event_nodes_free;
@@ -198,6 +200,7 @@ class Supervisor {
     vector<unique_ptr<Event>> events_;
     uint16_t num_active_events_;
     uint64_t t_next_event_;
+    Point2d pos_;            // supervisor pos
     Event* auction;  // the event currently being auctioned
     uint64_t t_next_gps_tick_;
 
@@ -209,8 +212,29 @@ class Supervisor {
     WbDeviceTag emitter_;
     WbDeviceTag receivers_[NUM_ROBOTS];
 
+    // track proximity times and current proximity state between robots
+    double proximity_time_[NUM_ROBOTS][NUM_ROBOTS];
+    bool proximity_state_[NUM_ROBOTS][NUM_ROBOTS];
+
     typedef vector<pair<Event*, message_event_state_t>> event_queue_t;
 
+
+    private:
+    // wall struct
+    struct Wall {
+        Point2d a; //one endpoint
+        Point2d b; //other endpoint
+        double thickness;  // full thickness (m)
+    };
+    Wall walls_[MAX_WALLS];
+    int num_walls_ = 0;
+
+    // track time spent near walls per robot
+    double proximity_wall_time_[NUM_ROBOTS];  // seconds
+    double proximity_any_time_ = 0.0;    // any time in simulation where there is a proximity either near wall or another robot
+
+    // robot geometry
+    const double robot_radius_ = 0.05;
     // Private functions
    private:
     void addEvent() {
@@ -302,6 +326,51 @@ class Supervisor {
         }
     }
 
+    void collisionDetection(uint64_t step_size) {
+        // accumulate time (in seconds) robots spend within PROXIMITY_THRESHOLD
+        double dt_s = (double)step_size / 1000.0;
+        bool any_proximity_this_step = false;
+        //wall coordinates:
+        Point2d wall_1_left(-0.6, 0);
+
+
+        // check all robot pairs for proximity
+        for (int i = 0; i < NUM_ROBOTS; ++i) {
+            const double* pos_i = getRobotPos(i);
+            Point2d robot_i_pos(pos_i[0], pos_i[1]);
+            for (int j = i + 1; j < NUM_ROBOTS; ++j) {
+                const double* pos_j = getRobotPos(j);
+                Point2d robot_j_pos(pos_j[0], pos_j[1]);
+                double distance = robot_i_pos.Distance(robot_j_pos);
+                bool within = distance < PROXIMITY_THRESHOLD;
+                if (within) {
+                    proximity_time_[i][j] += dt_s;
+                    proximity_time_[j][i] += dt_s;
+                    any_proximity_this_step = true;
+                }
+                proximity_state_[i][j] = within;
+                proximity_state_[j][i] = within;
+            }
+        }
+
+        // Check proximity to walls (no avoidance)
+        for (int i = 0; i < NUM_ROBOTS; ++i) {
+            const double* pos_i = getRobotPos(i);
+            Point2d robot_i_pos(pos_i[0], pos_i[1]);
+            for (int w = 0; w < num_walls_; ++w) {
+                double dist = pos_.DistanceToSegment(robot_i_pos, walls_[w].a, walls_[w].b);
+                double threshold = (walls_[w].thickness / 2.0) + robot_radius_ + 0.0; // optional safety margin
+                if (dist < threshold) {
+                    proximity_wall_time_[i] += dt_s;
+                    any_proximity_this_step = true;
+                }
+            }
+        }
+
+        if (any_proximity_this_step) {
+            proximity_any_time_ += dt_s; //increment the final parameter
+        }
+    }
     void handleAuctionEvents(event_queue_t& event_queue) {
         // For each unassigned event
         for (auto& event : events_) {
@@ -365,6 +434,14 @@ class Supervisor {
 
         num_events_handled_ = 0;
         stat_total_distance_ = 0.0;
+
+        //for wall proximity code
+        num_walls_ = 0;
+        walls_[num_walls_++] = Wall{Point2d(-0.6375, 0.0), Point2d(-0.2625, 0.0), 0.01};  //Lefthand wall
+        walls_[num_walls_++] = Wall{Point2d(0.125, 0.65), Point2d(0.125, -0.2), 0.01};  //Top wall
+
+        // init wall proximity times
+        for (int i = 0; i < NUM_ROBOTS; ++i) proximity_wall_time_[i] = 0.0;
 
         // add the first few events
         for (int i = 0; i < NUM_ACTIVE_EVENTS; ++i) {
@@ -465,6 +542,8 @@ class Supervisor {
             }
         }
 
+        collisionDetection(step_size);
+
         // Keep track of distance travelled by all robots
         statTotalDistance();
 
@@ -481,6 +560,27 @@ class Supervisor {
 
             printf("Handled %d events in %d seconds, events handled per second = %.2f\n", num_events_handled_,
                    (int)clock_ / 1000, ehr);
+            
+            // print proximity matrix (seconds)
+            printf("*********PROXIMTY TO OTHER ROBOTS*********\n\n");
+            for (int i = 0; i < NUM_ROBOTS; ++i) {
+                printf("Robot %d:", i);
+                for (int j = 0; j < NUM_ROBOTS; ++j) {
+                    printf(" %.2f", proximity_time_[i][j]);
+                }
+                printf("\n");
+            }
+            //print wall proximity times
+            printf("*********PROXIMTY TO WALL*********\n");
+            for (int i = 0; i< NUM_ROBOTS; ++i){
+                printf("Robot %d was near a wall for %.2f seconds:",i, proximity_wall_time_[i]);
+                printf("\n");
+            }
+
+            //final metric for any proximity
+            printf("*********ANY PROXIMITY METRIC*********\n");
+            printf("Total time any robot was near another robot or a wall: %.2f seconds\n", proximity_any_time_);
+
             printf("Performance: %f\n", perf);
             return false;
         } else {
