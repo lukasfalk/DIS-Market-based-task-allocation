@@ -9,5 +9,7 @@ The robots know the 1/3 + 2/3 for spawning a new task A or B.
 
 Questions:
 Do we use GNSS at the moment?
+Should robots moving over a task that isnt assigned to them still trigger??? 
+^right now we pass directly over tasks lmao, felt like it was different in the lab??
 
-
+It looks like the robots are quite far away from the tasks when they are considered finished? Did i fuck up the code??

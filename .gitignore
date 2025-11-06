@@ -10,3 +10,7 @@ controllers/**/build/
 worlds/.project4.wbproj
 *.wbproj
 *.wbproj
+worlds/.project4.wbproj
+worlds/project4.wbt
+worlds/project4.wbt
+*.wbt

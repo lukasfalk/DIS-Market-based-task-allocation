@@ -186,7 +186,6 @@ static void receive_updates() {
                 target_valid = 0;  // used in general state machine
             target_list_length = target_list_length - 1;
             // --- NEW: stop and pause based on robot type and event type ---
-            // stop motors immediately
             wb_motor_set_velocity(left_motor, 0.0);
             wb_motor_set_velocity(right_motor, 0.0);
             // set pause deadline (clock is in ms)
@@ -226,6 +225,9 @@ static void receive_updates() {
             ///*** SIMPLE TACTIC ***///
             indx = target_list_length;
             double d = dist(my_pos[0], my_pos[1], msg.event_x, msg.event_y);
+            int specialization_weight=get_pause_duration_ms(robot_specialization, msg.task_type)/1000; //ranges from 1-9
+
+            double final_bid= 0.2 * d + 0.0025 * specialization_weight;
             ///*** END SIMPLE TACTIC ***///
 
             ///*** BETTER TACTIC ***///
@@ -255,9 +257,14 @@ static void receive_updates() {
 
             ///*** END BEST TACTIC ***///
 
+
+
+            // printf("Robot %d bidding for event %d with type %d with distance %.2f and specialization weight %d resulting in final bid %.2f at index %d \n",
+            //        robot_id, msg.event_id, msg.task_type, d, specializationWeight, final_bid, indx);
+
             // Send my bid to the supervisor
-            const bid_t my_bid = {robot_id, msg.event_id, d, indx};
-            // DBG(("bidding robot %d for event %d with value %.2f at index %d\n", robot_id, msg.event_id, d, indx));
+            const bid_t my_bid = {robot_id, msg.event_id, final_bid, indx};
+            DBG(("bidding robot %d for event %d with value %.2f at index %d\n", robot_id, msg.event_id, final_bid, indx));
             wb_emitter_set_channel(emitter_tag, robot_id + 1);
             wb_emitter_send(emitter_tag, &my_bid, sizeof(bid_t));
         }
