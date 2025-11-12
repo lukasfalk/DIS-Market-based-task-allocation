@@ -1,16 +1,7 @@
-# Ignore build directories inside each controller folder
-# E.g. controllers/auct_super/build/
+# Ignore build directories/files inside each controller folder
+controllers/*/*.exe
 controllers/*/build/
-# And nested build directories under controllers (defensive)
 controllers/**/build/
-*.exe
-*.wbproj
-*.wbproj
-*.wbproj
-worlds/.project4.wbproj
-*.wbproj
-*.wbproj
-worlds/.project4.wbproj
-worlds/project4.wbt
-worlds/project4.wbt
-*.wbt
+
+# Ignore cache files in protos directory
+protos/*.cache
