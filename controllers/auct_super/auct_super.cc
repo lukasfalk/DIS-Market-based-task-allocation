@@ -45,11 +45,11 @@ using namespace std;
 #define PROXIMITY_THRESHOLD (0.20)  // distance below which robots are considered in collision
 
 // Parameters that can be changed
-#define NUM_ROBOTS 5                 // Change this also in the epuck_crown.c!
-#define NUM_ACTIVE_EVENTS 10          // number of active events
-#define TOTAL_EVENTS_TO_HANDLE 999    // Events after which simulation stops or...
-#define MAX_RUNTIME (3 * 60 * 1000)  // ...total runtime after which simulation stops
-#define MAX_BATTERY_LIFETIME (2 * 60 * 1000) //2 minutes of battery life in ms
+#define NUM_ROBOTS 5                          // Change this also in the epuck_crown.c!
+#define NUM_ACTIVE_EVENTS 10                  // number of active events
+#define TOTAL_EVENTS_TO_HANDLE 999            // Events after which simulation stops or...
+#define MAX_RUNTIME (3 * 60 * 1000)           // ...total runtime after which simulation stops
+#define MAX_BATTERY_LIFETIME (2 * 60 * 1000)  // 2 minutes of battery life in ms
 
 #define MAX_WALLS 2
 
@@ -201,14 +201,14 @@ class Supervisor {
     vector<unique_ptr<Event>> events_;
     uint16_t num_active_events_;
     uint64_t t_next_event_;
-    Point2d pos_;            // supervisor pos
+    Point2d pos_;    // supervisor pos
     Event* auction;  // the event currently being auctioned
     uint64_t t_next_gps_tick_;
 
     uint16_t num_events_handled_;  // total number of events handled
     double stat_total_distance_;   // total distance traveled
     double stat_robot_prev_pos_[NUM_ROBOTS][2];
-    uint32_t robot_battery_used[NUM_ROBOTS]; //time spent moving //I think int and unsigned int are too small, a larger non-floating datatype can be used (but i cant remember them and i have no internet LMAO)
+    uint32_t robot_battery_used[NUM_ROBOTS];  // time spent moving //I think int and unsigned int are too small, a larger non-floating datatype can be used (but i cant remember them and i have no internet LMAO)
 
     WbNodeRef robots_[NUM_ROBOTS];
     WbDeviceTag emitter_;
@@ -220,12 +220,11 @@ class Supervisor {
 
     typedef vector<pair<Event*, message_event_state_t>> event_queue_t;
 
-
-    private:
+   private:
     // wall struct
     struct Wall {
-        Point2d a; //one endpoint
-        Point2d b; //other endpoint
+        Point2d a;         // one endpoint
+        Point2d b;         // other endpoint
         double thickness;  // full thickness (m)
     };
     Wall walls_[MAX_WALLS];
@@ -233,7 +232,7 @@ class Supervisor {
 
     // track time spent near walls per robot
     double proximity_wall_time_[NUM_ROBOTS];  // seconds
-    double proximity_any_time_ = 0.0;    // any time in simulation where there is a proximity either near wall or another robot
+    double proximity_any_time_ = 0.0;         // any time in simulation where there is a proximity either near wall or another robot
 
     // robot geometry
     const double robot_radius_ = 0.05;
@@ -321,17 +320,17 @@ class Supervisor {
             if (dist <= EVENT_RANGE) {
                 printf("D robot %d reached event %d\n", event->assigned_to_, event->id_);
                 // calculate battery usage for waiting after reaching the task
-                if (event->assigned_to_ == 0 || event->assigned_to_ == 1){ //Robot A
-                    if (event->task_type_ == TASK_TYPE_A){
-                        robot_battery_used[event->assigned_to_] += 3000; //Robot A task A
+                if (event->assigned_to_ == 0 || event->assigned_to_ == 1) {  // Robot A
+                    if (event->task_type_ == TASK_TYPE_A) {
+                        robot_battery_used[event->assigned_to_] += 3000;  // Robot A task A
                     } else {
-                        robot_battery_used[event->assigned_to_] += 5000; //Robot A task B
+                        robot_battery_used[event->assigned_to_] += 5000;  // Robot A task B
                     }
-                } else { //Robot B
-                    if (event->task_type_ == TASK_TYPE_A){
-                        robot_battery_used[event->assigned_to_] += 9000; //Robot B task A
+                } else {  // Robot B
+                    if (event->task_type_ == TASK_TYPE_A) {
+                        robot_battery_used[event->assigned_to_] += 9000;  // Robot B task A
                     } else {
-                        robot_battery_used[event->assigned_to_] += 1000; //Robot B task B
+                        robot_battery_used[event->assigned_to_] += 1000;  // Robot B task B
                     }
                 }
                 num_events_handled_++;
@@ -372,7 +371,7 @@ class Supervisor {
             Point2d robot_i_pos(pos_i[0], pos_i[1]);
             for (int w = 0; w < num_walls_; ++w) {
                 double dist = pos_.DistanceToSegment(robot_i_pos, walls_[w].a, walls_[w].b);
-                double threshold = (walls_[w].thickness / 2.0) + robot_radius_ + 0.0; // optional safety margin
+                double threshold = (walls_[w].thickness / 2.0) + robot_radius_ + 0.0;  // optional safety margin
                 if (dist < threshold) {
                     proximity_wall_time_[i] += dt_s;
                     any_proximity_this_step = true;
@@ -381,7 +380,7 @@ class Supervisor {
         }
 
         if (any_proximity_this_step) {
-            proximity_any_time_ += dt_s; //increment the final parameter
+            proximity_any_time_ += dt_s;  // increment the final parameter
         }
     }
     void handleAuctionEvents(event_queue_t& event_queue) {
@@ -423,7 +422,7 @@ class Supervisor {
         for (int i = 0; i < NUM_ROBOTS; ++i) {
             const double* robot_pos = getRobotPos(i);
             double delta[2] = {robot_pos[0] - stat_robot_prev_pos_[i][0], robot_pos[1] - stat_robot_prev_pos_[i][1]};
-            if ((delta[0] + delta[1])  > 0.0){
+            if ((delta[0] + delta[1]) > 0.0) {
                 robot_battery_used[i] += step_size;
             }
             stat_total_distance_ += sqrt(delta[0] * delta[0] + delta[1] * delta[1]);
@@ -451,10 +450,10 @@ class Supervisor {
         num_events_handled_ = 0;
         stat_total_distance_ = 0.0;
 
-        //for wall proximity code
+        // for wall proximity code
         num_walls_ = 0;
-        walls_[num_walls_++] = Wall{Point2d(-0.6375, 0.0), Point2d(-0.2625, 0.0), 0.01};  //Lefthand wall
-        walls_[num_walls_++] = Wall{Point2d(0.125, 0.65), Point2d(0.125, -0.2), 0.01};  //Top wall
+        walls_[num_walls_++] = Wall{Point2d(-0.6375, 0.0), Point2d(-0.2625, 0.0), 0.01};  // Lefthand wall
+        walls_[num_walls_++] = Wall{Point2d(0.125, 0.65), Point2d(0.125, -0.2), 0.01};    // Top wall
 
         // init wall proximity times
         for (int i = 0; i < NUM_ROBOTS; ++i) proximity_wall_time_[i] = 0.0;
@@ -564,7 +563,7 @@ class Supervisor {
 
         // Keep track of distance travelled by all robots
         statTotalDistance(step_size);
-        
+
         // Time to end the experiment?
         if (num_events_handled_ >= TOTAL_EVENTS_TO_HANDLE || (MAX_RUNTIME > 0 && clock_ >= MAX_RUNTIME)) {
             for (int i = 0; i < NUM_ROBOTS; i++) {
@@ -578,7 +577,7 @@ class Supervisor {
 
             printf("Handled %d events in %d seconds, events handled per second = %.2f\n", num_events_handled_,
                    (int)clock_ / 1000, ehr);
-            
+
             // print proximity matrix (seconds)
             printf("*********PROXIMTY TO OTHER ROBOTS*********\n\n");
             for (int i = 0; i < NUM_ROBOTS; ++i) {
@@ -588,21 +587,21 @@ class Supervisor {
                 }
                 printf("\n");
             }
-            //print wall proximity times
+            // print wall proximity times
             printf("*********PROXIMTY TO WALL*********\n");
-            for (int i = 0; i< NUM_ROBOTS; ++i){
-                printf("Robot %d was near a wall for %.2f seconds:",i, proximity_wall_time_[i]);
+            for (int i = 0; i < NUM_ROBOTS; ++i) {
+                printf("Robot %d was near a wall for %.2f seconds:", i, proximity_wall_time_[i]);
                 printf("\n");
             }
 
-            //final metric for any proximity
+            // final metric for any proximity
             printf("*********ANY PROXIMITY METRIC*********\n");
             printf("Total time any robot was near another robot or a wall: %.2f seconds\n", proximity_any_time_);
 
-            //battery used
+            // battery used
             printf("*********BATTERY USED METRIC*********\n");
-            for (int i = 0; i< NUM_ROBOTS; ++i){
-            printf("Battery usage for robot %d: %.2f, which corresponds to %d %% of total battery life\n",i,robot_battery_used[i]/1000, (robot_battery_used[i]) / (MAX_BATTERY_LIFETIME) * 100);
+            for (int i = 0; i < NUM_ROBOTS; ++i) {
+                printf("Battery usage for robot %d: %.2f, which corresponds to %d %% of total battery life\n", i, robot_battery_used[i] / 1000.0, (robot_battery_used[i]) / (MAX_BATTERY_LIFETIME) * 100);
             }
 
             printf("Performance: %f\n", perf);
