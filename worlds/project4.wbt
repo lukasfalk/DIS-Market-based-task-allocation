@@ -8,8 +8,8 @@ WorldInfo {
   title "Lab05 Threshold"
 }
 Viewpoint {
-  orientation -0.553636 0.528037 0.643945 1.96141
-  position -0.105269 -0.758085 3.70224
+  orientation -0.5773502691896258 0.5773502691896258 0.5773502691896258 2.094
+  position 0.013489288700390359 -0.0013197841467153882 2.1600968008480246
 }
 Background {
   skyColor [
@@ -24,7 +24,7 @@ Solid {
   translation 0.125 0.225 0
   rotation 0 0 1 1.57079
   children [
-    Shape {
+    DEF wall2 Shape {
       appearance Appearance {
         material Material {
           diffuseColor 0.5 0.5 0.5
@@ -36,11 +36,12 @@ Solid {
     }
   ]
   name "wall2"
+  boundingObject USE wall2
 }
 Solid {
   translation -0.45 0 0
   children [
-    Shape {
+    DEF wall1 Shape {
       appearance Appearance {
         material Material {
           diffuseColor 0.5 0.5 0.5
@@ -52,6 +53,318 @@ Solid {
     }
   ]
   name "wall1"
+  boundingObject USE wall1
+}
+DEF VisibilityGraph Transform {
+  translation 0 0 -0.045
+  children [
+    DEF VGNodeA Transform {
+      translation -0.575 0.575 0
+      rotation 0 1 0 0
+      children [
+        Shape {
+          appearance Appearance {
+            material Material {
+              diffuseColor 0 1 0.317647
+            }
+          }
+          geometry Sphere {
+            radius 0.05
+            subdivision 2
+          }
+        }
+      ]
+      translationStep 0.005
+    }
+    DEF VGNodeB Transform {
+      translation 0.07 0.575 0
+      rotation 0 1 0 0
+      children [
+        Shape {
+          appearance Appearance {
+            material Material {
+              diffuseColor 0 1 0.317647
+            }
+          }
+          geometry Sphere {
+            radius 0.05
+            subdivision 2
+          }
+        }
+      ]
+      translationStep 0.005
+    }
+    DEF VGNodeC Transform {
+      translation 0.18 0.575 0
+      rotation 0 1 0 0
+      children [
+        Shape {
+          appearance Appearance {
+            material Material {
+              diffuseColor 0 1 0.317647
+            }
+          }
+          geometry Sphere {
+            radius 0.05
+            subdivision 2
+          }
+        }
+      ]
+      translationStep 0.005
+    }
+    DEF VGNodeD Transform {
+      translation 0.575 0.575 0
+      rotation 0 1 0 0
+      children [
+        Shape {
+          appearance Appearance {
+            material Material {
+              diffuseColor 0 1 0.317647
+            }
+          }
+          geometry Sphere {
+            radius 0.05
+            subdivision 2
+          }
+        }
+      ]
+      translationStep 0.005
+    }
+    DEF VGNodeE Transform {
+      translation -0.575 0.055 0
+      rotation 0 1 0 0
+      children [
+        Shape {
+          appearance Appearance {
+            material Material {
+              diffuseColor 0 1 0.317647
+            }
+          }
+          geometry Sphere {
+            radius 0.05
+            subdivision 2
+          }
+        }
+      ]
+      translationStep 0.005
+    }
+    DEF VGNodeF Transform {
+      translation -0.215 0.055 0
+      rotation 0 1 0 0
+      children [
+        Shape {
+          appearance Appearance {
+            material Material {
+              diffuseColor 0 1 0.317647
+            }
+          }
+          geometry Sphere {
+            radius 0.05
+            subdivision 2
+          }
+        }
+      ]
+      translationStep 0.005
+    }
+    DEF VGNodeG Transform {
+      translation -0.575 -0.055 0
+      rotation 0 1 0 0
+      children [
+        Shape {
+          appearance Appearance {
+            material Material {
+              diffuseColor 0 1 0.317647
+            }
+          }
+          geometry Sphere {
+            radius 0.05
+            subdivision 2
+          }
+        }
+      ]
+      translationStep 0.005
+    }
+    DEF VGNodeH Transform {
+      translation -0.215 -0.055 0
+      rotation 0 1 0 0
+      children [
+        Shape {
+          appearance Appearance {
+            material Material {
+              diffuseColor 0 1 0.317647
+            }
+          }
+          geometry Sphere {
+            radius 0.05
+            subdivision 2
+          }
+        }
+      ]
+      translationStep 0.005
+    }
+    DEF VGNodeI Transform {
+      translation 0.07 -0.25 0
+      rotation 0 1 0 0
+      children [
+        Shape {
+          appearance Appearance {
+            material Material {
+              diffuseColor 0 1 0.317647
+            }
+          }
+          geometry Sphere {
+            radius 0.05
+            subdivision 2
+          }
+        }
+      ]
+      translationStep 0.005
+    }
+    DEF VGNodeJ Transform {
+      translation 0.18 -0.25 0
+      rotation 0 1 0 0
+      children [
+        Shape {
+          appearance Appearance {
+            material Material {
+              diffuseColor 0 1 0.317647
+            }
+          }
+          geometry Sphere {
+            radius 0.05
+            subdivision 2
+          }
+        }
+      ]
+      translationStep 0.005
+    }
+    DEF VGNodeK Transform {
+      translation -0.575 -0.575 0
+      rotation 0 1 0 0
+      children [
+        Shape {
+          appearance Appearance {
+            material Material {
+              diffuseColor 0 1 0.317647
+            }
+          }
+          geometry Sphere {
+            radius 0.05
+            subdivision 2
+          }
+        }
+      ]
+      translationStep 0.005
+    }
+    DEF VGNodeL Transform {
+      translation 0.575 -0.575 0
+      rotation 0 1 0 0
+      children [
+        Shape {
+          appearance Appearance {
+            material Material {
+              diffuseColor 0 1 0.317647
+            }
+          }
+          geometry Sphere {
+            radius 0.05
+            subdivision 2
+          }
+        }
+      ]
+      translationStep 0.005
+    }
+    DEF VGNodeStart Transform {
+      translation 0.48 0.2 0
+      rotation 0 1 0 0
+      children [
+        Shape {
+          appearance Appearance {
+            material Material {
+              diffuseColor 1 0.333333 1
+            }
+          }
+          geometry Sphere {
+            radius 0.05
+            subdivision 2
+          }
+        }
+      ]
+      translationStep 0.005
+    }
+    DEF VGNodeGoal1 Transform {
+      translation 0.16 -0.53 0
+      rotation 0 1 0 0
+      children [
+        Shape {
+          appearance Appearance {
+            material Material {
+              diffuseColor 0.666667 0 1
+            }
+          }
+          geometry Sphere {
+            radius 0.05
+            subdivision 2
+          }
+        }
+      ]
+      translationStep 0.005
+    }
+    DEF VGNodeGoal2 Transform {
+      translation -0.34 -0.4 0
+      rotation 0 1 0 0
+      children [
+        Shape {
+          appearance Appearance {
+            material Material {
+              diffuseColor 0.666667 0 1
+            }
+          }
+          geometry Sphere {
+            radius 0.05
+            subdivision 2
+          }
+        }
+      ]
+      translationStep 0.005
+    }
+    DEF VGNodeGoal3 Transform {
+      translation -0.38 -0.15 0
+      rotation 0 1 0 0
+      children [
+        Shape {
+          appearance Appearance {
+            material Material {
+              diffuseColor 0.666667 0 1
+            }
+          }
+          geometry Sphere {
+            radius 0.05
+            subdivision 2
+          }
+        }
+      ]
+      translationStep 0.005
+    }
+    DEF VGNodeGoal4 Transform {
+      translation -0.4 0.16 0
+      rotation 0 1 0 0
+      children [
+        Shape {
+          appearance Appearance {
+            material Material {
+              diffuseColor 0.666667 0 1
+            }
+          }
+          geometry Sphere {
+            radius 0.05
+            subdivision 2
+          }
+        }
+      ]
+      translationStep 0.005
+    }
+  ]
 }
 PointLight {
   attenuation 0 0 0.5
@@ -322,7 +635,8 @@ DEF e-puck3 epuck_rangeColB {
   receiver_channel 4
 }
 DEF e-puck4 epuck_rangeColB {
-  translation -0.576769 0.594344 -6.3962e-05
+  translation -0.476769 0.574344 -6.3962e-05
+  rotation 0 1 0 0
   name "e-puck4"
   controller "epuck_crown"
   emitter_channel 5
