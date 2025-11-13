@@ -30,8 +30,12 @@ using namespace std;
 #include <webots/robot.h>
 #include <webots/supervisor.h>
 
+#include "../epuck_crown/pathfinding.hpp"
 #include "Point2d.h"
 #include "message.h"
+
+// Forward declare the helper function from pathfinding
+extern "C" bool is_point_in_interior_wall(Point2d point);
 
 #define DBG(x) printf x
 #define RAND ((float)rand() / RAND_MAX)
@@ -61,6 +65,31 @@ using namespace std;
 WbNodeRef g_event_nodes[MAX_EVENTS];
 vector<WbNodeRef> g_event_nodes_free;
 
+// Test function to verify interior wall detection
+void test_interior_wall_detection() {
+    printf("\n=== Testing Interior Wall Detection ===\n");
+
+    // Test points that should be INSIDE walls
+    Point2d inside_bijc = {0.125, 0.0};   // Middle of vertical wall BIJC
+    Point2d inside_efhg = {-0.395, 0.0};  // Middle of horizontal wall EFHG
+
+    // Test points that should be OUTSIDE walls
+    Point2d outside_1 = {0.3, 0.3};    // Top right
+    Point2d outside_2 = {-0.4, -0.4};  // Bottom left
+    Point2d outside_3 = {0.0, 0.0};    // Center
+
+    printf("Testing INSIDE points (should be rejected):\n");
+    printf("  (0.125, 0.0) in wall: %s\n", is_point_in_interior_wall(inside_bijc) ? "YES" : "NO");
+    printf("  (-0.395, 0.0) in wall: %s\n", is_point_in_interior_wall(inside_efhg) ? "YES" : "NO");
+
+    printf("Testing OUTSIDE points (should be accepted):\n");
+    printf("  (0.3, 0.3) in wall: %s\n", is_point_in_interior_wall(outside_1) ? "YES" : "NO");
+    printf("  (-0.4, -0.4) in wall: %s\n", is_point_in_interior_wall(outside_2) ? "YES" : "NO");
+    printf("  (0.0, 0.0) in wall: %s\n", is_point_in_interior_wall(outside_3) ? "YES" : "NO");
+
+    printf("=== Interior Wall Test Complete ===\n\n");
+}
+
 double gauss(void) {
     double x1, x2, w;
     do {
@@ -73,9 +102,22 @@ double gauss(void) {
     return (x1 * w);
 }
 
-double rand_coord() {
-    // return -1.0 + 2.0*RAND;
-    return -0.55 + 0.95 * RAND;  // Full arena of final project
+Point2d rand_coord() {
+    // Sample uniformly within the arena bounds defined by the pathfinding graph
+    // Arena bounds: x in [-0.575, 0.575], y in [-0.575, 0.575]
+    // Excludes points inside interior walls
+    const double ARENA_MIN = -0.575;
+    const double ARENA_MAX = 0.575;
+
+    Point2d candidate;
+    int attempts = 0;
+    do {
+        candidate.x = ARENA_MIN + (ARENA_MAX - ARENA_MIN) * RAND;
+        candidate.y = ARENA_MIN + (ARENA_MAX - ARENA_MIN) * RAND;
+        attempts++;
+    } while (is_point_in_interior_wall(candidate));
+
+    return candidate;
 }
 
 double expovariate(double mu) {
@@ -107,7 +149,7 @@ class Event {
     // Event creation
     Event(uint16_t id)
         : id_(id),
-          pos_(rand_coord(), rand_coord()),
+          pos_(rand_coord()),
           task_type_(RAND < (1.0f / 3.0f) ? TASK_TYPE_A : TASK_TYPE_B),  // 1/3 of the time task type A, 2/3 of the time type B
           assigned_to_(-1),
           t_announced_(-1),
@@ -444,6 +486,9 @@ class Supervisor {
     void reset() {
         clock_ = 0;
 
+        // Test interior wall detection
+        test_interior_wall_detection();
+
         // initialize & link events
         next_event_id_ = 0;
         events_.clear();
@@ -472,10 +517,10 @@ class Supervisor {
         for (int i = 0; i < NUM_ROBOTS; i++) {
             linkRobot(i);
 
-            double pos[2] = {rand_coord(), rand_coord()};
-            setRobotPos(i, pos[0], pos[1]);
-            stat_robot_prev_pos_[i][0] = pos[0];
-            stat_robot_prev_pos_[i][1] = pos[1];
+            Point2d pos = rand_coord();
+            setRobotPos(i, pos.x, pos.y);
+            stat_robot_prev_pos_[i][0] = pos.x;
+            stat_robot_prev_pos_[i][1] = pos.y;
             robot_battery_used[i] = 0;
         }
 
@@ -606,7 +651,7 @@ class Supervisor {
             // battery used
             printf("*********BATTERY USED METRIC*********\n");
             for (int i = 0; i < NUM_ROBOTS; ++i) {
-                printf("Battery usage for robot %d: %.2f, which corresponds to %d %% of total battery life\n", i, robot_battery_used[i] / 1000.0, (robot_battery_used[i]) / (MAX_BATTERY_LIFETIME) * 100);
+                printf("Battery usage for robot %d: %.2f, which corresponds to %.2f %% of total battery life\n", i, robot_battery_used[i] / 1000.0, (robot_battery_used[i]) / static_cast<double>(MAX_BATTERY_LIFETIME) * 100.0);
             }
 
             printf("Performance: %f\n", perf);
@@ -631,30 +676,30 @@ void link_event_nodes() {
 }
 
 // MAIN LOOP (does steps)
-// int main(void) {
-//     Supervisor supervisor{};
+int main(void) {
+    Supervisor supervisor{};
 
-//     // initialization
-//     wb_robot_init();
-//     link_event_nodes();
-//     wb_robot_step(STEP_SIZE);
+    // initialization
+    wb_robot_init();
+    link_event_nodes();
+    wb_robot_step(STEP_SIZE);
 
-//     srand(time(NULL));
-//     supervisor.reset();
+    srand(time(NULL));
+    supervisor.reset();
 
-//     // start the controller
-//     printf("Starting main loop...\n");
-//     while (wb_robot_step(STEP_SIZE) != -1) {
-//         if (!supervisor.step(STEP_SIZE)) break;  // break at return = false
-//     }
-//     wb_supervisor_simulation_reset_physics();
-//     wb_robot_cleanup();
-//     exit(0);
-//     return 0;
-// }
+    // start the controller
+    printf("Starting main loop...\n");
+    while (wb_robot_step(STEP_SIZE) != -1) {
+        if (!supervisor.step(STEP_SIZE)) break;  // break at return = false
+    }
+    wb_supervisor_simulation_reset_physics();
+    wb_robot_cleanup();
+    exit(0);
+    return 0;
+}
 
 // --- TIME TO TEST THE PATHFINDING STUFF ---
-
+/*
 #include "../epuck_crown/pathfinding.hpp"
 
 void visualize_graph(PathPlanner* planner) {
@@ -782,3 +827,4 @@ int main(void) {
     exit(0);
     return 0;
 }
+    */

@@ -359,3 +359,33 @@ double get_path(Point2d start, Point2d goal, Point2d* path_buffer, int max_size)
     }
     return path_length;
 }
+
+/// @brief Checks if a point is inside one of the interior walls (obstacles).
+/// @details The interior walls are rectangular obstacles:
+///          - Vertical wall BIJC: x ∈ [0.07, 0.18], y ∈ [-0.25, 0.575]
+///          - Horizontal wall EFHG: x ∈ [-0.575, -0.215], y ∈ [-0.055, 0.055]
+/// @param point The point to check
+/// @return true if the point is inside either wall rectangle, false otherwise
+bool is_point_in_interior_wall(Point2d point) {
+    // Vertical wall BIJC
+    // B(0.07, 0.575), I(0.07, -0.25), J(0.18, -0.25), C(0.18, 0.575)
+    // x range: [0.07, 0.18], y range: [-0.25, 0.575]
+    const double BIJC_X_MIN = 0.07;
+    const double BIJC_X_MAX = 0.18;
+    const double BIJC_Y_MIN = -0.25;
+    const double BIJC_Y_MAX = 0.575;
+
+    bool in_bijc = (point.x >= BIJC_X_MIN && point.x <= BIJC_X_MAX && point.y >= BIJC_Y_MIN && point.y <= BIJC_Y_MAX);
+
+    // Horizontal wall EFHG
+    // E(-0.575, 0.055), F(-0.215, 0.055), H(-0.215, -0.055), G(-0.575, -0.055)
+    // x range: [-0.575, -0.215], y range: [-0.055, 0.055]
+    const double EFHG_X_MIN = -0.575;
+    const double EFHG_X_MAX = -0.215;
+    const double EFHG_Y_MIN = -0.055;
+    const double EFHG_Y_MAX = 0.055;
+
+    bool in_efhg = (point.x >= EFHG_X_MIN && point.x <= EFHG_X_MAX && point.y >= EFHG_Y_MIN && point.y <= EFHG_Y_MAX);
+
+    return in_bijc || in_efhg;
+}
