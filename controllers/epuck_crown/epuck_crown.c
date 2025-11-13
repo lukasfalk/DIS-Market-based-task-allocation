@@ -169,6 +169,7 @@ static void receive_updates() {
             wb_motor_set_velocity(left_motor, 0);
             wb_motor_set_velocity(right_motor, 0);
             wb_robot_step(TIME_STEP);
+            printf("Robot %d received QUIT message (either because of battery or ended mission). Exiting now (in epuck_crown).\n", robot_id);
             exit(0);
         } else if (msg.event_state == MSG_EVENT_DONE) {
             // If event is done, delete it from array

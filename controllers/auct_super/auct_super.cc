@@ -208,7 +208,7 @@ class Supervisor {
     uint16_t num_events_handled_;  // total number of events handled
     double stat_total_distance_;   // total distance traveled
     double stat_robot_prev_pos_[NUM_ROBOTS][2];
-    uint32_t robot_battery_used[NUM_ROBOTS]; //time spent moving //I think int and unsigned int are too small, a larger non-floating datatype can be used (but i cant remember them and i have no internet LMAO)
+    uint32_t robot_battery_used[NUM_ROBOTS]; //time spent moving
 
     WbNodeRef robots_[NUM_ROBOTS];
     WbDeviceTag emitter_;
@@ -269,6 +269,17 @@ class Supervisor {
         }
         wb_receiver_enable(receivers_[id], 2);  // 32
         wb_receiver_set_channel(receivers_[id], id + 1);
+    }
+
+
+    void check_battery_life(uint16_t robot_id){ //check if robot_i has run out of battery
+        if (robot_battery_used[robot_id] >= MAX_BATTERY_LIFETIME){
+            printf("Robot %d has run out of battery life at time %lld with battery level %d. Killing this robot\n", robot_id, clock_, robot_battery_used[robot_id]);
+            message_t msg;
+            buildMessage(robot_id, NULL, MSG_QUIT, &msg);
+            wb_emitter_set_channel(emitter_, robot_id + 1);
+            wb_emitter_send(emitter_, &msg, sizeof(message_t));
+        }
     }
 
     // Assemble a new message to be sent to robots (added type of event)
@@ -338,6 +349,8 @@ class Supervisor {
                 event->markDone(clock_);
                 num_active_events_--;
                 event_queue.emplace_back(event.get(), MSG_EVENT_DONE);
+                printf("current robot battery of %d, %d \n", event->assigned_to_, robot_battery_used[event->assigned_to_]); 
+                check_battery_life(event->assigned_to_); //check if robot_i has run out of battery
             }
         }
     }
@@ -425,6 +438,7 @@ class Supervisor {
             double delta[2] = {robot_pos[0] - stat_robot_prev_pos_[i][0], robot_pos[1] - stat_robot_prev_pos_[i][1]};
             if ((delta[0] + delta[1])  > 0.0){
                 robot_battery_used[i] += step_size;
+                check_battery_life(i);
             }
             stat_total_distance_ += sqrt(delta[0] * delta[0] + delta[1] * delta[1]);
             stat_robot_prev_pos_[i][0] = robot_pos[0];
@@ -602,7 +616,7 @@ class Supervisor {
             //battery used
             printf("*********BATTERY USED METRIC*********\n");
             for (int i = 0; i< NUM_ROBOTS; ++i){
-            printf("Battery usage for robot %d: %.2f, which corresponds to %d %% of total battery life\n",i,robot_battery_used[i]/1000, (robot_battery_used[i]) / (MAX_BATTERY_LIFETIME) * 100);
+            printf("Battery usage for robot %d: %d, which corresponds to %d %% of total battery life\n",i,robot_battery_used[i]/1000, (robot_battery_used[i]) / (MAX_BATTERY_LIFETIME) * 100);
             }
 
             printf("Performance: %f\n", perf);
