@@ -65,6 +65,17 @@ USE_C_API = true
 ###
 ###-----------------------------------------------------------------------------
 
+# --- Project-specific build configuration ---
+
+# C++ source files for the supervisor controller
+CXX_SOURCES = auct_super.cc ../epuck_crown/pathfinding.cpp
+
+# Compilation flags (C++ standard, warnings, optimization)
+CFLAGS = -std=c++17 -Wall -Wextra -O2
+
+# Include paths for finding headers
+INCLUDE = -I"$(WEBOTS_HOME_PATH)/include" -I.
+
 ### Do not modify: this includes Webots global Makefile.include
 null :=
 space := $(null) $(null)

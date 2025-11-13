@@ -20,6 +20,11 @@
 
 using namespace std;
 
+// Define M_PI if not already defined (needed for some compilers)
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 #include <webots/emitter.h>
 #include <webots/receiver.h>
 #include <webots/robot.h>
@@ -626,8 +631,93 @@ void link_event_nodes() {
 }
 
 // MAIN LOOP (does steps)
+// int main(void) {
+//     Supervisor supervisor{};
+
+//     // initialization
+//     wb_robot_init();
+//     link_event_nodes();
+//     wb_robot_step(STEP_SIZE);
+
+//     srand(time(NULL));
+//     supervisor.reset();
+
+//     // start the controller
+//     printf("Starting main loop...\n");
+//     while (wb_robot_step(STEP_SIZE) != -1) {
+//         if (!supervisor.step(STEP_SIZE)) break;  // break at return = false
+//     }
+//     wb_supervisor_simulation_reset_physics();
+//     wb_robot_cleanup();
+//     exit(0);
+//     return 0;
+// }
+
+// --- TIME TO TEST THE PATHFINDING STUFF ---
+
+#include "../epuck_crown/pathfinding.hpp"
+
+void visualize_graph(PathPlanner* planner) {
+    // Note: Webots drawing API requires access to the supervisor node root.
+    // The drawing functions in Webots are basic and limited.
+    // For now, we'll skip direct visualization as it requires complex Webots API usage.
+    // Instead, you can verify the pathfinding visually by:
+    // 1. Plotting the waypoints in Rviz or similar
+    // 2. Adding debug output to the PathPlanner
+    // 3. Using the e-puck's motion to trace the path
+
+    if (!planner) return;
+
+    const auto& nodes = planner->getNodes();
+    const auto& adj_matrix = planner->getAdjMatrix();
+
+    printf("=== Visibility Graph Visualization ===\n");
+    printf("Number of nodes: %zu\n", nodes.size());
+    printf("Nodes:\n");
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        printf("  Node %zu ('%c'): (%.3f, %.3f)\n", i, nodes[i].id, nodes[i].pos.x, nodes[i].pos.y);
+    }
+
+    printf("\nEdges (adjacency matrix):\n");
+    int edge_count = 0;
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        for (size_t j = i + 1; j < nodes.size(); ++j) {
+            if (adj_matrix[i][j] > 0) {
+                printf("  Edge %d: Node %zu ('%c') <-> Node %zu ('%c'), distance: %.3f\n",
+                       edge_count++, i, nodes[i].id, j, nodes[j].id, adj_matrix[i][j]);
+            } else {
+                printf("  No edge between Node %zu and Node %zu (value: %.3f)\n", i, j, adj_matrix[i][j]);
+            }
+        }
+    }
+    printf("Total edges: %d\n", edge_count);
+}
+
+void visualize_path(const std::vector<Point2d>& path) {
+    if (path.size() < 2) {
+        printf("Path is empty or contains only 1 point.\n");
+        return;
+    }
+
+    printf("=== Path Visualization ===\n");
+    printf("Path length: %zu waypoints\n", path.size());
+    double total_distance = 0.0;
+
+    for (size_t i = 0; i < path.size(); ++i) {
+        printf("  Waypoint %zu: (%.3f, %.3f)\n", i, path[i].x, path[i].y);
+
+        if (i > 0) {
+            double segment_dist = path[i].Distance(path[i - 1]);
+            total_distance += segment_dist;
+            printf("    -> distance from previous: %.3f\n", segment_dist);
+        }
+    }
+    printf("Total path distance: %.3f\n", total_distance);
+}
+
 int main(void) {
     Supervisor supervisor{};
+    PathPlanner planner;  // Create an instance of your planner
 
     // initialization
     wb_robot_init();
@@ -637,12 +727,57 @@ int main(void) {
     srand(time(NULL));
     supervisor.reset();
 
-    // start the controller
-    printf("Starting main loop...\n");
-    while (wb_robot_step(STEP_SIZE) != -1) {
-        if (!supervisor.step(STEP_SIZE)) break;  // break at return = false
-    }
-    wb_supervisor_simulation_reset_physics();
+    // Visualize the visibility graph
+    printf("\n");
+    visualize_graph(&planner);
+    printf("\n");
+
+    // Test pathfinding with a few test cases
+    printf("=== Running Pathfinding Test Cases ===\n\n");
+
+    // --- TEST CASE 1: Simple, unobstructed path ---
+    printf("[Test Case 1] Unobstructed path\n");
+    Point2d start1 = {0.48, 0.2};   // in top right quadrant
+    Point2d goal1 = {0.16, -0.53};  // in bottom right quadrant under the vertical wall
+    printf(">> start: (%.3f, %.3f), goal: (%.3f, %.3f)\n", start1.x, start1.y, goal1.x, goal1.y);
+    std::vector<Point2d> path1 = planner.findPath(start1, goal1);
+    visualize_path(path1);
+    printf("\n");
+
+    // --- TEST CASE 2: Path around one wall short ---
+    printf("[Test Case 2] Path around one wall (short)\n");
+    Point2d goal2 = {-0.3, -0.4};  // in bottom left quadrant under+left of the vertical wall
+    printf(">> start: (%.3f, %.3f), goal: (%.3f, %.3f)\n", start1.x, start1.y, goal2.x, goal2.y);
+    std::vector<Point2d> path2 = planner.findPath(start1, goal2);
+    visualize_path(path2);
+    printf("\n");
+
+    // --- TEST CASE 3: Path around one wall longer ---
+    printf("[Test Case 3] Path around one wall (longer)\n");
+    Point2d goal3 = {-0.38, -0.15};  // in bottom left quadrant left of the vertical wall & under the horizontal wall
+    printf(">> start: (%.3f, %.3f), goal: (%.3f, %.3f)\n", start1.x, start1.y, goal3.x, goal3.y);
+    std::vector<Point2d> path3 = planner.findPath(start1, goal3);
+    visualize_path(path3);
+    printf("\n");
+
+    // --- TEST CASE 4: Path around two walls ---
+    printf("[Test Case 4] Path around two walls\n");
+    Point2d goal4 = {-0.4, 0.16};  // in top left quadrant left of vertical wall & above horizontal wall
+    printf(">> start: (%.3f, %.3f), goal: (%.3f, %.3f)\n", start1.x, start1.y, goal4.x, goal4.y);
+    std::vector<Point2d> path4 = planner.findPath(start1, goal4);
+    visualize_path(path4);
+    printf("\n");
+
+    // --- TEST CASE 5: Edge case - start and goal are the same ---
+    printf("[Test Case 5] Start equals goal\n");
+    Point2d goal5 = {start1.x, start1.y};  // same as start
+    printf(">> start: (%.3f, %.3f), goal: (%.3f, %.3f)\n", start1.x, start1.y, goal5.x, goal5.y);
+    std::vector<Point2d> path5 = planner.findPath(start1, goal5);
+    visualize_path(path5);
+    printf("\n");
+
+    printf("=== Pathfinding Tests Complete ===\n");
+
     wb_robot_cleanup();
     exit(0);
     return 0;
