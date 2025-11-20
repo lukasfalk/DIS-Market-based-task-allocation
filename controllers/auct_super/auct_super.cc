@@ -20,13 +20,22 @@
 
 using namespace std;
 
+// Define M_PI if not already defined (needed for some compilers)
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 #include <webots/emitter.h>
 #include <webots/receiver.h>
 #include <webots/robot.h>
 #include <webots/supervisor.h>
 
+#include "../epuck_crown/pathfinding.hpp"
 #include "Point2d.h"
 #include "message.h"
+
+// Forward declare the helper function from pathfinding
+extern "C" bool is_point_in_interior_wall(Point2d point);
 
 #define DBG(x) printf x
 #define RAND ((float)rand() / RAND_MAX)
@@ -45,16 +54,41 @@ using namespace std;
 #define PROXIMITY_THRESHOLD (0.20)  // distance below which robots are considered in collision
 
 // Parameters that can be changed
-#define NUM_ROBOTS 5                 // Change this also in the epuck_crown.c!
-#define NUM_ACTIVE_EVENTS 10          // number of active events
-#define TOTAL_EVENTS_TO_HANDLE 999    // Events after which simulation stops or...
-#define MAX_RUNTIME (3 * 60 * 1000)  // ...total runtime after which simulation stops
-#define MAX_BATTERY_LIFETIME (2 * 60 * 1000) //2 minutes of battery life in ms
+#define NUM_ROBOTS 5                          // Change this also in the epuck_crown.c!
+#define NUM_ACTIVE_EVENTS 10                  // number of active events
+#define TOTAL_EVENTS_TO_HANDLE 999            // Events after which simulation stops or...
+#define MAX_RUNTIME (3 * 60 * 1000)           // ...total runtime after which simulation stops
+#define MAX_BATTERY_LIFETIME (2 * 60 * 1000)  // 2 minutes of battery life in ms
 
 #define MAX_WALLS 2
 
 WbNodeRef g_event_nodes[MAX_EVENTS];
 vector<WbNodeRef> g_event_nodes_free;
+
+// Test function to verify interior wall detection
+void test_interior_wall_detection() {
+    printf("\n=== Testing Interior Wall Detection ===\n");
+
+    // Test points that should be INSIDE walls
+    Point2d inside_bijc = {0.125, 0.0};   // Middle of vertical wall BIJC
+    Point2d inside_efhg = {-0.395, 0.0};  // Middle of horizontal wall EFHG
+
+    // Test points that should be OUTSIDE walls
+    Point2d outside_1 = {0.3, 0.3};    // Top right
+    Point2d outside_2 = {-0.4, -0.4};  // Bottom left
+    Point2d outside_3 = {0.0, 0.0};    // Center
+
+    printf("Testing INSIDE points (should be rejected):\n");
+    printf("  (0.125, 0.0) in wall: %s\n", is_point_in_interior_wall(inside_bijc) ? "YES" : "NO");
+    printf("  (-0.395, 0.0) in wall: %s\n", is_point_in_interior_wall(inside_efhg) ? "YES" : "NO");
+
+    printf("Testing OUTSIDE points (should be accepted):\n");
+    printf("  (0.3, 0.3) in wall: %s\n", is_point_in_interior_wall(outside_1) ? "YES" : "NO");
+    printf("  (-0.4, -0.4) in wall: %s\n", is_point_in_interior_wall(outside_2) ? "YES" : "NO");
+    printf("  (0.0, 0.0) in wall: %s\n", is_point_in_interior_wall(outside_3) ? "YES" : "NO");
+
+    printf("=== Interior Wall Test Complete ===\n\n");
+}
 
 double gauss(void) {
     double x1, x2, w;
@@ -68,9 +102,22 @@ double gauss(void) {
     return (x1 * w);
 }
 
-double rand_coord() {
-    // return -1.0 + 2.0*RAND;
-    return -0.55 + 0.95 * RAND;  // Full arena of final project
+Point2d rand_coord() {
+    // Sample uniformly within the arena bounds defined by the pathfinding graph
+    // Arena bounds: x in [-0.575, 0.575], y in [-0.575, 0.575]
+    // Excludes points inside interior walls
+    const double ARENA_MIN = -0.575;
+    const double ARENA_MAX = 0.575;
+
+    Point2d candidate;
+    int attempts = 0;
+    do {
+        candidate.x = ARENA_MIN + (ARENA_MAX - ARENA_MIN) * RAND;
+        candidate.y = ARENA_MIN + (ARENA_MAX - ARENA_MIN) * RAND;
+        attempts++;
+    } while (is_point_in_interior_wall(candidate));
+
+    return candidate;
 }
 
 double expovariate(double mu) {
@@ -102,7 +149,7 @@ class Event {
     // Event creation
     Event(uint16_t id)
         : id_(id),
-          pos_(rand_coord(), rand_coord()),
+          pos_(rand_coord()),
           task_type_(RAND < (1.0f / 3.0f) ? TASK_TYPE_A : TASK_TYPE_B),  // 1/3 of the time task type A, 2/3 of the time type B
           assigned_to_(-1),
           t_announced_(-1),
@@ -201,7 +248,7 @@ class Supervisor {
     vector<unique_ptr<Event>> events_;
     uint16_t num_active_events_;
     uint64_t t_next_event_;
-    Point2d pos_;            // supervisor pos
+    Point2d pos_;    // supervisor pos
     Event* auction;  // the event currently being auctioned
     uint64_t t_next_gps_tick_;
 
@@ -220,12 +267,11 @@ class Supervisor {
 
     typedef vector<pair<Event*, message_event_state_t>> event_queue_t;
 
-
-    private:
+   private:
     // wall struct
     struct Wall {
-        Point2d a; //one endpoint
-        Point2d b; //other endpoint
+        Point2d a;         // one endpoint
+        Point2d b;         // other endpoint
         double thickness;  // full thickness (m)
     };
     Wall walls_[MAX_WALLS];
@@ -233,7 +279,7 @@ class Supervisor {
 
     // track time spent near walls per robot
     double proximity_wall_time_[NUM_ROBOTS];  // seconds
-    double proximity_any_time_ = 0.0;    // any time in simulation where there is a proximity either near wall or another robot
+    double proximity_any_time_ = 0.0;         // any time in simulation where there is a proximity either near wall or another robot
 
     // robot geometry
     const double robot_radius_ = 0.05;
@@ -342,17 +388,17 @@ void check_battery_life(uint16_t robot_id){
             if (dist <= EVENT_RANGE) {
                 printf("D robot %d reached event %d\n", event->assigned_to_, event->id_);
                 // calculate battery usage for waiting after reaching the task
-                if (event->assigned_to_ == 0 || event->assigned_to_ == 1){ //Robot A
-                    if (event->task_type_ == TASK_TYPE_A){
-                        robot_battery_used[event->assigned_to_] += 3000; //Robot A task A
+                if (event->assigned_to_ == 0 || event->assigned_to_ == 1) {  // Robot A
+                    if (event->task_type_ == TASK_TYPE_A) {
+                        robot_battery_used[event->assigned_to_] += 3000;  // Robot A task A
                     } else {
-                        robot_battery_used[event->assigned_to_] += 5000; //Robot A task B
+                        robot_battery_used[event->assigned_to_] += 5000;  // Robot A task B
                     }
-                } else { //Robot B
-                    if (event->task_type_ == TASK_TYPE_A){
-                        robot_battery_used[event->assigned_to_] += 9000; //Robot B task A
+                } else {  // Robot B
+                    if (event->task_type_ == TASK_TYPE_A) {
+                        robot_battery_used[event->assigned_to_] += 9000;  // Robot B task A
                     } else {
-                        robot_battery_used[event->assigned_to_] += 1000; //Robot B task B
+                        robot_battery_used[event->assigned_to_] += 1000;  // Robot B task B
                     }
                 }
                 num_events_handled_++;
@@ -399,7 +445,7 @@ void check_battery_life(uint16_t robot_id){
             Point2d robot_i_pos(pos_i[0], pos_i[1]);
             for (int w = 0; w < num_walls_; ++w) {
                 double dist = pos_.DistanceToSegment(robot_i_pos, walls_[w].a, walls_[w].b);
-                double threshold = (walls_[w].thickness / 2.0) + robot_radius_ + 0.0; // optional safety margin
+                double threshold = (walls_[w].thickness / 2.0) + robot_radius_ + 0.0;  // optional safety margin
                 if (dist < threshold) {
                     proximity_wall_time_[i] += dt_s;
                     any_proximity_this_step = true;
@@ -408,7 +454,7 @@ void check_battery_life(uint16_t robot_id){
         }
 
         if (any_proximity_this_step) {
-            proximity_any_time_ += dt_s; //increment the final parameter
+            proximity_any_time_ += dt_s;  // increment the final parameter
         }
     }
     void handleAuctionEvents(event_queue_t& event_queue) {
@@ -481,6 +527,9 @@ void check_battery_life(uint16_t robot_id){
     void reset() {
         clock_ = 0;
 
+        // Test interior wall detection
+        test_interior_wall_detection();
+
         // initialize & link events
         next_event_id_ = 0;
         events_.clear();
@@ -492,10 +541,10 @@ void check_battery_life(uint16_t robot_id){
         num_events_handled_ = 0;
         stat_total_distance_ = 0.0;
 
-        //for wall proximity code
+        // for wall proximity code
         num_walls_ = 0;
-        walls_[num_walls_++] = Wall{Point2d(-0.6375, 0.0), Point2d(-0.2625, 0.0), 0.01};  //Lefthand wall
-        walls_[num_walls_++] = Wall{Point2d(0.125, 0.65), Point2d(0.125, -0.2), 0.01};  //Top wall
+        walls_[num_walls_++] = Wall{Point2d(-0.6375, 0.0), Point2d(-0.2625, 0.0), 0.01};  // Lefthand wall
+        walls_[num_walls_++] = Wall{Point2d(0.125, 0.65), Point2d(0.125, -0.2), 0.01};    // Top wall
 
         // init wall proximity times
         for (int i = 0; i < NUM_ROBOTS; ++i) proximity_wall_time_[i] = 0.0;
@@ -509,10 +558,10 @@ void check_battery_life(uint16_t robot_id){
         for (int i = 0; i < NUM_ROBOTS; i++) {
             linkRobot(i);
 
-            double pos[2] = {rand_coord(), rand_coord()};
-            setRobotPos(i, pos[0], pos[1]);
-            stat_robot_prev_pos_[i][0] = pos[0];
-            stat_robot_prev_pos_[i][1] = pos[1];
+            Point2d pos = rand_coord();
+            setRobotPos(i, pos.x, pos.y);
+            stat_robot_prev_pos_[i][0] = pos.x;
+            stat_robot_prev_pos_[i][1] = pos.y;
             robot_battery_used[i] = 0;
         }
 
@@ -605,7 +654,7 @@ void check_battery_life(uint16_t robot_id){
 
         // Keep track of distance travelled by all robots
         statTotalDistance(step_size);
-        
+
         // Time to end the experiment?
         if (num_events_handled_ >= TOTAL_EVENTS_TO_HANDLE || (MAX_RUNTIME > 0 && clock_ >= MAX_RUNTIME)) {
             for (int i = 0; i < NUM_ROBOTS; i++) {
@@ -619,7 +668,7 @@ void check_battery_life(uint16_t robot_id){
 
             printf("Handled %d events in %d seconds, events handled per second = %.2f\n", num_events_handled_,
                    (int)clock_ / 1000, ehr);
-            
+
             // print proximity matrix (seconds)
             printf("*********PROXIMTY TO OTHER ROBOTS*********\n\n");
             for (int i = 0; i < NUM_ROBOTS; ++i) {
@@ -629,14 +678,14 @@ void check_battery_life(uint16_t robot_id){
                 }
                 printf("\n");
             }
-            //print wall proximity times
+            // print wall proximity times
             printf("*********PROXIMTY TO WALL*********\n");
-            for (int i = 0; i< NUM_ROBOTS; ++i){
-                printf("Robot %d was near a wall for %.2f seconds:",i, proximity_wall_time_[i]);
+            for (int i = 0; i < NUM_ROBOTS; ++i) {
+                printf("Robot %d was near a wall for %.2f seconds:", i, proximity_wall_time_[i]);
                 printf("\n");
             }
 
-            //final metric for any proximity
+            // final metric for any proximity
             printf("*********ANY PROXIMITY METRIC*********\n");
             printf("Total time any robot was near another robot or a wall: %.2f seconds\n", proximity_any_time_);
 
@@ -695,3 +744,134 @@ int main(void) {
     exit(0);
     return 0;
 }
+
+// --- TIME TO TEST THE PATHFINDING STUFF ---
+/*
+#include "../epuck_crown/pathfinding.hpp"
+
+void visualize_graph(PathPlanner* planner) {
+    // Note: Webots drawing API requires access to the supervisor node root.
+    // The drawing functions in Webots are basic and limited.
+    // For now, we'll skip direct visualization as it requires complex Webots API usage.
+    // Instead, you can verify the pathfinding visually by:
+    // 1. Plotting the waypoints in Rviz or similar
+    // 2. Adding debug output to the PathPlanner
+    // 3. Using the e-puck's motion to trace the path
+
+    if (!planner) return;
+
+    const auto& nodes = planner->getNodes();
+    const auto& adj_matrix = planner->getAdjMatrix();
+
+    printf("=== Visibility Graph Visualization ===\n");
+    printf("Number of nodes: %zu\n", nodes.size());
+    printf("Nodes:\n");
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        printf("  Node %zu ('%c'): (%.3f, %.3f)\n", i, nodes[i].id, nodes[i].pos.x, nodes[i].pos.y);
+    }
+
+    printf("\nEdges (adjacency matrix):\n");
+    int edge_count = 0;
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        for (size_t j = i + 1; j < nodes.size(); ++j) {
+            if (adj_matrix[i][j] > 0) {
+                printf("  Edge %d: Node %zu ('%c') <-> Node %zu ('%c'), distance: %.3f\n",
+                       edge_count++, i, nodes[i].id, j, nodes[j].id, adj_matrix[i][j]);
+            } else {
+                printf("  No edge between Node %zu and Node %zu (value: %.3f)\n", i, j, adj_matrix[i][j]);
+            }
+        }
+    }
+    printf("Total edges: %d\n", edge_count);
+}
+
+void visualize_path(const std::vector<Point2d>& path) {
+    if (path.size() < 2) {
+        printf("Path is empty or contains only 1 point.\n");
+        return;
+    }
+
+    printf("=== Path Visualization ===\n");
+    printf("Path length: %zu waypoints\n", path.size());
+    double total_distance = 0.0;
+
+    for (size_t i = 0; i < path.size(); ++i) {
+        printf("  Waypoint %zu: (%.3f, %.3f)\n", i, path[i].x, path[i].y);
+
+        if (i > 0) {
+            double segment_dist = path[i].Distance(path[i - 1]);
+            total_distance += segment_dist;
+            printf("    -> distance from previous: %.3f\n", segment_dist);
+        }
+    }
+    printf("Total path distance: %.3f\n", total_distance);
+}
+
+int main(void) {
+    Supervisor supervisor{};
+    PathPlanner planner;  // Create an instance of your planner
+
+    // initialization
+    wb_robot_init();
+    link_event_nodes();
+    wb_robot_step(STEP_SIZE);
+
+    srand(time(NULL));
+    supervisor.reset();
+
+    // Visualize the visibility graph
+    printf("\n");
+    visualize_graph(&planner);
+    printf("\n");
+
+    // Test pathfinding with a few test cases
+    printf("=== Running Pathfinding Test Cases ===\n\n");
+
+    // --- TEST CASE 1: Simple, unobstructed path ---
+    printf("[Test Case 1] Unobstructed path\n");
+    Point2d start1 = {0.48, 0.2};   // in top right quadrant
+    Point2d goal1 = {0.16, -0.53};  // in bottom right quadrant under the vertical wall
+    printf(">> start: (%.3f, %.3f), goal: (%.3f, %.3f)\n", start1.x, start1.y, goal1.x, goal1.y);
+    std::vector<Point2d> path1 = planner.findPath(start1, goal1);
+    visualize_path(path1);
+    printf("\n");
+
+    // --- TEST CASE 2: Path around one wall short ---
+    printf("[Test Case 2] Path around one wall (short)\n");
+    Point2d goal2 = {-0.3, -0.4};  // in bottom left quadrant under+left of the vertical wall
+    printf(">> start: (%.3f, %.3f), goal: (%.3f, %.3f)\n", start1.x, start1.y, goal2.x, goal2.y);
+    std::vector<Point2d> path2 = planner.findPath(start1, goal2);
+    visualize_path(path2);
+    printf("\n");
+
+    // --- TEST CASE 3: Path around one wall longer ---
+    printf("[Test Case 3] Path around one wall (longer)\n");
+    Point2d goal3 = {-0.38, -0.15};  // in bottom left quadrant left of the vertical wall & under the horizontal wall
+    printf(">> start: (%.3f, %.3f), goal: (%.3f, %.3f)\n", start1.x, start1.y, goal3.x, goal3.y);
+    std::vector<Point2d> path3 = planner.findPath(start1, goal3);
+    visualize_path(path3);
+    printf("\n");
+
+    // --- TEST CASE 4: Path around two walls ---
+    printf("[Test Case 4] Path around two walls\n");
+    Point2d goal4 = {-0.4, 0.16};  // in top left quadrant left of vertical wall & above horizontal wall
+    printf(">> start: (%.3f, %.3f), goal: (%.3f, %.3f)\n", start1.x, start1.y, goal4.x, goal4.y);
+    std::vector<Point2d> path4 = planner.findPath(start1, goal4);
+    visualize_path(path4);
+    printf("\n");
+
+    // --- TEST CASE 5: Edge case - start and goal are the same ---
+    printf("[Test Case 5] Start equals goal\n");
+    Point2d goal5 = {start1.x, start1.y};  // same as start
+    printf(">> start: (%.3f, %.3f), goal: (%.3f, %.3f)\n", start1.x, start1.y, goal5.x, goal5.y);
+    std::vector<Point2d> path5 = planner.findPath(start1, goal5);
+    visualize_path(path5);
+    printf("\n");
+
+    printf("=== Pathfinding Tests Complete ===\n");
+
+    wb_robot_cleanup();
+    exit(0);
+    return 0;
+}
+    */

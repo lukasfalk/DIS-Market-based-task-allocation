@@ -10,70 +10,62 @@
 #ifndef _POINT2D_H
 #define _POINT2D_H
 
-#include <iostream>
 #include <cmath>
+#include <iostream>
 
+using namespace std;
 
 //! \brief x,y coordinate in 2d euclidean space
 class Point2d {
-    
-    public:
+   public:
+    double x;  //!< x-coordinate
+    double y;  //!< y-coordinate
 
-        double x;                       //!< x-coordinate
-        double y;                       //!< y-coordinate
+    //! \brief operator: formatting for output streams
+    friend ostream& operator<<(ostream& os, const Point2d& p) { return os << "[" << p.x << "," << p.y << "]"; }
 
-        //! \brief operator: formatting for output streams
-        friend ostream &operator<<(ostream &os, const Point2d &p)
-        { return os << "[" << p.x << "," << p.y << "]"; }
+    //! \brief default constructor (initialized to the origin)
+    Point2d(double xin = 0, double yin = 0) {
+        x = xin;
+        y = yin;
+    };
 
-        //! \brief default constructor (initialized to the origin)
-        Point2d( double xin=0, double yin=0 ) 
-        {
-            x = xin;
-            y = yin;
-        };
+    //! \brief copy constructor
+    Point2d(const Point2d& p) {
+        x = p.x;
+        y = p.y;
+    };
 
-        //! \brief copy constructor
-        Point2d( const Point2d &p ) 
-        {
-            x = p.x;
-            y = p.y;
-        };
+    //! \brief destructor
+    ~Point2d() {};
 
-        //! \brief destructor
-        ~Point2d() {};
+    //! \brief operator: assignment
+    Point2d operator=(const Point2d p) {
+        x = p.x;
+        y = p.y;
+        return *this;
+    }
 
-        //! \brief operator: assignment
-        Point2d operator= (const Point2d p)
-        { 
-            x = p.x; 
-            y = p.y;
-            return *this; 
-        }
+    //! \brief distance to another Point2d
+    double Distance(const Point2d& p) const {
+        return sqrt((x - p.x) * (x - p.x) + (y - p.y) * (y - p.y));
+    }
 
-        //! \brief distance to another Point2d
-        double Distance(Point2d p)
-        {
-            return sqrt( (x-p.x)*(x-p.x) + (y-p.y)*(y-p.y) );
-        }
+    //! \brief distance from point "p" to wall segment with endpoints "a" and "b"
+    double DistanceToSegment(const Point2d& p, const Point2d& a, const Point2d& b) const {
+        double l2 = a.Distance(b) * a.Distance(b);
+        if (l2 == 0.0) return p.Distance(a);  // a == b case
+        double t = ((p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y)) / l2;
+        if (t < 0.0) return p.Distance(a);
+        if (t > 1.0) return p.Distance(b);
+        Point2d projection(a.x + t * (b.x - a.x), a.y + t * (b.y - a.y));
+        return p.Distance(projection);
+    }
 
-        //! \brief distance from point "p" to wall segment with endpoints "a" and "b"
-        double DistanceToSegment(Point2d p, Point2d a, Point2d b){
-            double l2 = a.Distance(b) * a.Distance(b);
-            if (l2 == 0.0) return p.Distance(a);   // a == b case
-            double t = ((p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y)) / l2;
-            if (t < 0.0) return p.Distance(a);
-            if (t > 1.0) return p.Distance(b);
-            Point2d projection(a.x + t * (b.x - a.x), a.y + t * (b.y - a.y));
-            return p.Distance(projection);
-        }
-
-        //! \brief angle to another Point2d
-        double Angle(Point2d p)
-        {
-            return atan2( p.y-y, p.x-x );
-        }
+    //! \brief angle to another Point2d
+    double Angle(const Point2d& p) const {
+        return atan2(p.y - y, p.x - x);
+    }
 };
 
-
-#endif // Point2d.h
+#endif  // Point2d.h
