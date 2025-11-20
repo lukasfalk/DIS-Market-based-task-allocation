@@ -337,7 +337,7 @@ void check_battery_life(uint16_t robot_id){
             wb_emitter_send(emitter_, &msg, sizeof(message_t));
         }
     }
-
+ 
     // Assemble a new message to be sent to robots (added type of event)
     void buildMessage(uint16_t robot_id, const Event* event, message_event_state_t event_state, message_t* msg) {
         WbFieldRef f_rot = wb_supervisor_node_get_field(robots_[robot_id], "rotation");

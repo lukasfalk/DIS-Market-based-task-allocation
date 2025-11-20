@@ -98,7 +98,7 @@ int pause_active = 0;
 
 // Battery tracking (in milliseconds)
 #define MAX_BATTERY_LIFETIME (2 * 60 * 1000)  // 2 minutes of battery life in ms (matches supervisor)
-int battery_time_used = 0;                    // Time spent traveling and at tasks (in ms)
+// int battery_time_used = 0;                    // Time spent traveling and at tasks (in ms)
 int travel_start_time = 0;                    // Timestamp when this travel phase started (ms)
 
 // Return pause duration (ms) based on robot specialization and task type (customize as needed)
@@ -211,9 +211,9 @@ static void receive_updates() {
             state = STAY;
 
             // Track battery consumption for this task (task execution time)
-            battery_time_used += task_time_ms;
-            DBG(("Robot %d: used %dms for task, total battery used: %dms / %dms\n",
-                 robot_id, task_time_ms, battery_time_used, MAX_BATTERY_LIFETIME));
+            // battery_time_used += task_time_ms;
+            // DBG(("Robot %d: used %dms for task, total battery used: %dms / %dms\n",
+            //      robot_id, task_time_ms, battery_time_used, MAX_BATTERY_LIFETIME));
 
             // Reset waypoint path for next target
             waypoint_count = 0;
@@ -253,64 +253,70 @@ static void receive_updates() {
             ////////////////////////////////////////////////////////////////
 
             ///*** SIMPLE TACTIC ***///
-            indx = target_list_length;
 
-            // Calculate actual path distance using pathfinding (accounts for walls/obstacles)
+            
+            // // Check battery: if accepting this task would exceed battery life, add penalty
+            // double battery_time_left = (MAX_BATTERY_LIFETIME - battery_time_used) / 1000.0;
+
+            double final_bid = 999999.0;  // Essentially refuse the bid
+            //if (time_to_travel + time_at_task > battery_time_left) {
+                // This task would cause us to run out of battery - bid very high to refuse it
+                // DBG(("Robot %d declining event %d: needs %.2fs but only %.2fs battery left\n",
+                //      robot_id, msg.event_id, time_to_travel + time_at_task, battery_time_left));
+            //} else {
+                // We have enough battery - use normal bidding (time to complete task)
+                //DBG(("[Robot %d] bid event %d: distance %.2fm, travel time %.2fs, task time %.2fs, battery left %.2fs\n",
+                 //    robot_id, msg.event_id, d, time_to_travel, time_at_task, battery_time_left));
+                //DBG(("           > bid = 1.25 * %.2f + %.2f - 0.00005 * %.2f^2 = %.2f + %.2f - %.2f = %.2f\n",
+                //     time_to_travel, time_at_task, battery_time_left, 1.25 * time_to_travel, time_at_task, 0.00005 * battery_time_left * battery_time_left, final_bid));
+            //}
+            ///*** END SIMPLE TACTIC ***///
+
+            ///*** BEST TACTIC ***///
+                        // Calculate actual path distance using pathfinding (accounts for walls/obstacles)
+            indx = 0;
             Point2d start = {my_pos[0], my_pos[1]};
             Point2d goal = {msg.event_x, msg.event_y};
             Point2d temp_waypoint_buffer[MAX_PATH_LENGTH];
-            double d = get_path(start, goal, temp_waypoint_buffer, MAX_PATH_LENGTH);
-
+            double d = get_path(start, goal, temp_waypoint_buffer, MAX_PATH_LENGTH);    
+            //double d = dist(my_pos[0], my_pos[1], msg.event_x, msg.event_y);
             // If pathfinding failed, use Euclidean distance as fallback
             if (d < 0) {
                 d = dist(my_pos[0], my_pos[1], msg.event_x, msg.event_y);
             }
-
+            if(target_list_length > 0){
+                for(i = 0; i < target_list_length; i++){
+                    // --- CASE 1: Insertion at the START ---
+                    if(i == 0){
+                        double dbeforetogoal = get_path(Point2d(my_pos[0], my_pos[1]), Point2d(msg.event_x, msg.event_y), temp_waypoint_buffer, MAX_PATH_LENGTH);
+                        double daftertogoal = get_path(Point2d(target[i][0], target[i][1]), Point2d(msg.event_x, msg.event_y), temp_waypoint_buffer, MAX_PATH_LENGTH);
+                        double dbeforetodafter = get_path(Point2d(my_pos[0], my_pos[1]), Point2d(target[i][0], target[i][1]), temp_waypoint_buffer, MAX_PATH_LENGTH);
+                        d = dbeforetogoal + daftertogoal - dbeforetodafter;
+                    }
+                    // --- CASE 2: Insertion in the MIDDLE --- 
+                    else {
+                        double dbeforetogoal = get_path(Point2d(target[i-1][0], target[i-1][1]), Point2d(msg.event_x, msg.event_y), temp_waypoint_buffer, MAX_PATH_LENGTH);
+                        double daftertogoal = get_path(Point2d(target[i][0], target[i][1]), Point2d(msg.event_x, msg.event_y), temp_waypoint_buffer, MAX_PATH_LENGTH);
+                        double dbeforetodafter = get_path(Point2d(target[i-1][0], target[i-1][1]), Point2d(target[i][0], target[i][1]), temp_waypoint_buffer, MAX_PATH_LENGTH);
+                        if((dbeforetogoal + daftertogoal - dbeforetodafter) < d){
+                            d = dbeforetogoal + daftertogoal - dbeforetodafter;
+                            indx = i;
+                        }
+                        // --- CASE 3: Appending to the END ---
+                        if(i == target_list_length - 1){
+                            if(daftertogoal < d) {
+                            d = daftertogoal;
+                            indx = i+1;
+                            }
+                        }
+                    }
+                }
+            }
             double time_at_task = get_pause_duration_ms(robot_specialization, msg.task_type) / 1000.0;
             double time_to_travel = d / 0.5;  // Assuming average speed of 0.5 m/s
+            final_bid = 1.25 * time_to_travel + time_at_task; //- 0.00005 * battery_time_left * battery_time_left;
 
-            // Check battery: if accepting this task would exceed battery life, add penalty
-            double battery_time_left = (MAX_BATTERY_LIFETIME - battery_time_used) / 1000.0;
 
-            double final_bid = 999999.0;  // Essentially refuse the bid
-            if (time_to_travel + time_at_task > battery_time_left) {
-                // This task would cause us to run out of battery - bid very high to refuse it
-                DBG(("Robot %d declining event %d: needs %.2fs but only %.2fs battery left\n",
-                     robot_id, msg.event_id, time_to_travel + time_at_task, battery_time_left));
-            } else {
-                // We have enough battery - use normal bidding (time to complete task)
-                DBG(("[Robot %d] bid event %d: distance %.2fm, travel time %.2fs, task time %.2fs, battery left %.2fs\n",
-                     robot_id, msg.event_id, d, time_to_travel, time_at_task, battery_time_left));
-                final_bid = 1.25 * time_to_travel + time_at_task - 0.00005 * battery_time_left * battery_time_left;
-                DBG(("           > bid = 1.25 * %.2f + %.2f - 0.00005 * %.2f^2 = %.2f + %.2f - %.2f = %.2f\n",
-                     time_to_travel, time_at_task, battery_time_left, 1.25 * time_to_travel, time_at_task, 0.00005 * battery_time_left * battery_time_left, final_bid));
-            }
-            ///*** END SIMPLE TACTIC ***///
-
-            ///*** BETTER TACTIC ***///
-            // Place your code here for I17
-            /*
-            indx = target_list_length;
-            double d = 0;
-            if(target_list_length > 0){
-                // TODO: put your strategy here
-
-            }else{
-                // TODO: put your strategy here
-
-            }
-            */
-            ///*** END BETTER TACTIC ***///
-
-            ///*** BEST TACTIC ***///
-            // Place your code here for I20
-            // indx = 0;
-            // double d = dist(my_pos[0], my_pos[1], msg.event_x, msg.event_z);
-            // if(target_list_length > 0)
-            //{
-            // for all the tasks inside the task list (i.e. target[i] where i goes up to target_list_length)  check if putting the current
-            // event (located at (msg.event_x, msg.event_z)) in between two task results in  a smaller distance, and modify the d accordingly.
-            //}
 
             ///*** END BEST TACTIC ***///
 
@@ -383,7 +389,7 @@ void reset(void) {
     indx = 0;
     pause_until = 0;
     pause_active = 0;
-    battery_time_used = 0;
+    //battery_time_used = 0;
     travel_start_time = 0;
 
     // Init target positions to "INVALID"
@@ -574,11 +580,11 @@ void run(int ms) {
     receive_updates();
 
     // Check if battery has been depleted
-    if (battery_time_used >= MAX_BATTERY_LIFETIME) {
-        state = DEAD;
-        DBG(("Robot %d: BATTERY DEPLETED! (used %dms / %dms max)\n",
-             robot_id, battery_time_used, MAX_BATTERY_LIFETIME));
-    }
+    // if (battery_time_used >= MAX_BATTERY_LIFETIME) {
+    //     state = DEAD;
+    //     DBG(("Robot %d: BATTERY DEPLETED! (used %dms / %dms max)\n",
+    //          robot_id, battery_time_used, MAX_BATTERY_LIFETIME));
+    // }
 
     // If we are paused, keep stopped until deadline
     if (pause_active) {
@@ -622,10 +628,10 @@ void run(int ms) {
                             // Reached final destination - track battery consumed during travel
                             msl = 0;
                             msr = 0;
-                            int travel_time_ms = sim_clock - travel_start_time;
-                            battery_time_used += travel_time_ms;
-                            DBG(("Robot %d: traveled for %dms, total battery used: %dms / %dms\n",
-                                 robot_id, travel_time_ms, battery_time_used, MAX_BATTERY_LIFETIME));
+                            //int travel_time_ms = sim_clock - travel_start_time;
+                            // battery_time_used += travel_time_ms;
+                            // DBG(("Robot %d: traveled for %dms, total battery used: %dms / %dms\n",
+                            //      robot_id, travel_time_ms, battery_time_used, MAX_BATTERY_LIFETIME));
                             waypoint_count = 0;  // Reset path for next target
                             current_waypoint_idx = 0;
                             travel_start_time = 0;
