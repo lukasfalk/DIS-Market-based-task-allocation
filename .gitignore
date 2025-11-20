@@ -16,3 +16,5 @@ worlds/project4.wbt
 *.wbt
 worlds/.project4.wbproj
 *.wbproj
+worlds/.project4.wbproj
+worlds/*.wbt

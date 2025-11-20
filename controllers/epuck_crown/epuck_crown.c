@@ -265,7 +265,7 @@ static void receive_updates() {
 
             // Send my bid to the supervisor
             const bid_t my_bid = {robot_id, msg.event_id, final_bid, indx};
-            DBG(("bidding robot %d for event %d with value %.2f at index %d\n", robot_id, msg.event_id, final_bid, indx));
+            //DBG(("bidding robot %d for event %d with value %.2f at index %d\n", robot_id, msg.event_id, final_bid, indx));
             wb_emitter_set_channel(emitter_tag, robot_id + 1);
             wb_emitter_send(emitter_tag, &my_bid, sizeof(bid_t));
         }

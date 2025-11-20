@@ -272,9 +272,19 @@ class Supervisor {
     }
 
 
-    void check_battery_life(uint16_t robot_id){ //check if robot_i has run out of battery
+void check_battery_life(uint16_t robot_id){ 
         if (robot_battery_used[robot_id] >= MAX_BATTERY_LIFETIME){
-            printf("Robot %d has run out of battery life at time %lld with battery level %d. Killing this robot\n", robot_id, clock_, robot_battery_used[robot_id]);
+            // Calculate simulation time of death
+            int sim_min = (clock_ / 1000) / 60;
+            int sim_sec = (clock_ / 1000) % 60;
+
+            // Calculate battery life used (should be max, but good for verification)
+            int batt_min = (robot_battery_used[robot_id] / 1000) / 60;
+            int batt_sec = (robot_battery_used[robot_id] / 1000) % 60;
+
+            printf("Robot %d ran out of battery at Sim Time %d:%02d (Battery used: %d:%02d). Killing this robot.\n", 
+                   robot_id, sim_min, sim_sec, batt_min, batt_sec);
+            
             message_t msg;
             buildMessage(robot_id, NULL, MSG_QUIT, &msg);
             wb_emitter_set_channel(emitter_, robot_id + 1);
@@ -349,8 +359,12 @@ class Supervisor {
                 event->markDone(clock_);
                 num_active_events_--;
                 event_queue.emplace_back(event.get(), MSG_EVENT_DONE);
-                printf("current robot battery of %d, %d \n", event->assigned_to_, robot_battery_used[event->assigned_to_]); 
-                check_battery_life(event->assigned_to_); //check if robot_i has run out of battery
+                int b_min = (robot_battery_used[event->assigned_to_] / 1000) / 60;
+                int b_sec = (robot_battery_used[event->assigned_to_] / 1000) % 60;
+                printf("Robot %d finished task. Current battery usage: %d:%02d\n", 
+                       event->assigned_to_, b_min, b_sec); 
+                
+                check_battery_life(event->assigned_to_);
             }
         }
     }
@@ -433,17 +447,30 @@ class Supervisor {
 
     // Calculate total distance travelled by robots
     void statTotalDistance(uint64_t step_size) {
+        //noise threshold for movement detection
+        const double NOISE_THRESHOLD = 0.001;
+
         for (int i = 0; i < NUM_ROBOTS; ++i) {
-            const double* robot_pos = getRobotPos(i);
-            double delta[2] = {robot_pos[0] - stat_robot_prev_pos_[i][0], robot_pos[1] - stat_robot_prev_pos_[i][1]};
-            if ((delta[0] + delta[1])  > 0.0){
-                robot_battery_used[i] += step_size;
-                check_battery_life(i);
-            }
-            stat_total_distance_ += sqrt(delta[0] * delta[0] + delta[1] * delta[1]);
-            stat_robot_prev_pos_[i][0] = robot_pos[0];
-            stat_robot_prev_pos_[i][1] = robot_pos[1];
+        const double* robot_pos = getRobotPos(i);
+        double delta[2] = {
+            robot_pos[0] - stat_robot_prev_pos_[i][0], 
+            robot_pos[1] - stat_robot_prev_pos_[i][1]
+        };
+
+        // Calculate distance moved (Euclidean for battery usage)
+        double dist_moved = sqrt(delta[0] * delta[0] + delta[1] * delta[1]);
+
+        // Only discharge battery if movement exceeds noise threshold
+        if (dist_moved > NOISE_THRESHOLD) {
+            robot_battery_used[i] += step_size;
+            check_battery_life(i);
         }
+
+        // Update stats
+        stat_total_distance_ += dist_moved;
+        stat_robot_prev_pos_[i][0] = robot_pos[0];
+        stat_robot_prev_pos_[i][1] = robot_pos[1];
+    }
     }
 
     // Public fucntions
@@ -613,12 +640,18 @@ class Supervisor {
             printf("*********ANY PROXIMITY METRIC*********\n");
             printf("Total time any robot was near another robot or a wall: %.2f seconds\n", proximity_any_time_);
 
-            //battery used
             printf("*********BATTERY USED METRIC*********\n");
-            for (int i = 0; i< NUM_ROBOTS; ++i){
-            printf("Battery usage for robot %d: %d, which corresponds to %d %% of total battery life\n",i,robot_battery_used[i]/1000, (robot_battery_used[i]) / (MAX_BATTERY_LIFETIME) * 100);
-            }
+            for (int i = 0; i < NUM_ROBOTS; ++i){
+                int total_sec = robot_battery_used[i] / 1000;
+                int mins = total_sec / 60;
+                int secs = total_sec % 60;
+                
+                // Cast to double to calculate accurate percentage
+                double percent = ((double)robot_battery_used[i] / MAX_BATTERY_LIFETIME) * 100.0;
 
+                printf("Battery usage for robot %d: %dmin %02dsec (%.1f%%)\n", 
+                       i, mins, secs, percent);
+            }
             printf("Performance: %f\n", perf);
             return false;
         } else {
