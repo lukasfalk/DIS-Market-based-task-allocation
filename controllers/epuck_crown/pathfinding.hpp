@@ -57,20 +57,11 @@ class PathPlanner {
     std::vector<Point2d> runAStar(const std::vector<std::vector<double>>& temp_adj_matrix, int start_node_idx, int goal_node_idx);
 };
 
-// --- C Interface for the e-puck C controller ---
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 double get_path(Point2d start, Point2d goal, Point2d* path_buffer, int max_size);
 
 /// @brief Checks if a point is inside one of the interior walls (obstacles).
 /// @param point The point to check
 /// @return true if the point is inside either the vertical wall (BIJC) or horizontal wall (EFHG), false otherwise
 bool is_point_in_interior_wall(Point2d point);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif  // PATH_PLANNER_H

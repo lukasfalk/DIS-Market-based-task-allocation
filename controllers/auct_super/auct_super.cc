@@ -34,9 +34,6 @@ using namespace std;
 #include "Point2d.h"
 #include "message.h"
 
-// Forward declare the helper function from pathfinding
-extern "C" bool is_point_in_interior_wall(Point2d point);
-
 #define DBG(x) printf x
 #define RAND ((float)rand() / RAND_MAX)
 
@@ -46,7 +43,7 @@ extern "C" bool is_point_in_interior_wall(Point2d point);
 #define STEP_SIZE 64          // simulation step size
 #define AUCTION_TIMEOUT 1000  // number of steps after which an auction stops
 
-#define EVENT_RANGE (0.1)              // distance within which a robot must come to do event
+#define EVENT_RANGE (0.05)             // distance within which a robot must come to do event
 #define EVENT_TIMEOUT (10000)          // ticks until an event auction runs out
 #define EVENT_GENERATION_DELAY (1000)  // average time between events ms (expo distribution)
 
@@ -230,6 +227,7 @@ class Event {
         t_done_ = -1;
     }
 
+    // Mark event as done by moving it out of the arena
     void markDone(uint64_t clk) {
         t_done_ = clk;
         double event_node_pos[3] = {-5, -5, 0.1};
@@ -366,20 +364,16 @@ class Supervisor {
 
             if (dist <= EVENT_RANGE) {
                 printf("D robot %d reached event %d\n", event->assigned_to_, event->id_);
-                // calculate battery usage for waiting after reaching the task
-                if (event->assigned_to_ == 0 || event->assigned_to_ == 1) {  // Robot A
-                    if (event->task_type_ == TASK_TYPE_A) {
-                        robot_battery_used[event->assigned_to_] += 3000;  // Robot A task A
-                    } else {
-                        robot_battery_used[event->assigned_to_] += 5000;  // Robot A task B
-                    }
-                } else {  // Robot B
-                    if (event->task_type_ == TASK_TYPE_A) {
-                        robot_battery_used[event->assigned_to_] += 9000;  // Robot B task A
-                    } else {
-                        robot_battery_used[event->assigned_to_] += 1000;  // Robot B task B
-                    }
+
+                // Calculate battery usage for time spent at the task completing it
+                int time_at_task = 0;
+                if (event->assigned_to_ <= 1) {  // A-specialist (robots 0, 1)
+                    time_at_task = (event->task_type_ == TASK_TYPE_A) ? 3000 : 5000;
+                } else {  // B-specialist (robots 2, 3, 4)
+                    time_at_task = (event->task_type_ == TASK_TYPE_A) ? 9000 : 1000;
                 }
+                robot_battery_used[event->assigned_to_] += time_at_task;
+
                 num_events_handled_++;
                 event->markDone(clock_);
                 num_active_events_--;
@@ -485,9 +479,6 @@ class Supervisor {
     // Reset robots & events
     void reset() {
         clock_ = 0;
-
-        // Test interior wall detection
-        test_interior_wall_detection();
 
         // initialize & link events
         next_event_id_ = 0;
@@ -617,6 +608,7 @@ class Supervisor {
         // Time to end the experiment?
         if (num_events_handled_ >= TOTAL_EVENTS_TO_HANDLE || (MAX_RUNTIME > 0 && clock_ >= MAX_RUNTIME)) {
             for (int i = 0; i < NUM_ROBOTS; i++) {
+                // DBG(("Sending MSG_QUIT message to robot %d\n", i));
                 buildMessage(i, NULL, MSG_QUIT, &msg);
                 wb_emitter_set_channel(emitter_, i + 1);
                 wb_emitter_send(emitter_, &msg, sizeof(message_t));
@@ -651,7 +643,7 @@ class Supervisor {
             // battery used
             printf("*********BATTERY USED METRIC*********\n");
             for (int i = 0; i < NUM_ROBOTS; ++i) {
-                printf("Battery usage for robot %d: %.2f, which corresponds to %.2f %% of total battery life\n", i, robot_battery_used[i] / 1000.0, (robot_battery_used[i]) / static_cast<double>(MAX_BATTERY_LIFETIME) * 100.0);
+                printf("Battery usage for robot %d: %dms, which corresponds to %.2f %% of total battery life\n", i, robot_battery_used[i], (robot_battery_used[i]) / static_cast<double>(MAX_BATTERY_LIFETIME) * 100.0);
             }
 
             printf("Performance: %f\n", perf);
