@@ -49,7 +49,7 @@ WbDeviceTag right_motor;    // handler for the right wheel of the robot
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 /* Collective decision parameters */
 
-#define STATECHANGE_DIST 10  // minimum value of all sensor inputs combined to change to obstacle avoidance mode
+#define STATECHANGE_DIST 580  // minimum value of all sensor inputs combined to change to obstacle avoidance mode
 
 typedef enum {
     STAY = 1,
@@ -233,8 +233,8 @@ static void receive_updates() {
             current_waypoint_idx = 0;
         } else if (msg.event_state == MSG_EVENT_WON) {
             // Insert event at index
-            DBG(("[Robot %d] (t=%dms) Won bid for task %d, adding to list of tasks at index %d\n",
-                 robot_id, sim_clock, msg.event_id, msg.event_index));
+            // DBG(("[Robot %d] (t=%dms) Won bid for task %d, adding to list of tasks at index %d\n",
+            //      robot_id, sim_clock, msg.event_id, msg.event_index));
             for (i = target_list_length; i >= msg.event_index; i--) {
                 target[i + 1][0] = target[i][0];
                 target[i + 1][1] = target[i][1];
@@ -330,7 +330,7 @@ else if (msg.event_state == MSG_EVENT_NEW) {
     } else {
         double final_bid = 1.5 * time_to_travel + time_at_task - 0.01 * battery_time_left;
         const bid_t my_bid = {robot_id, msg.event_id, final_bid, indx};
-        DBG(("Robot inserted task at %d \n", whereInsert));
+        //DBG(("Robot inserted task at %d \n", whereInsert));
         wb_emitter_set_channel(emitter_tag, robot_id + 1);
         wb_emitter_send(emitter_tag, &my_bid, sizeof(bid_t));
     }
@@ -451,6 +451,7 @@ void reset(void) {
 void update_state(int _sum_distances) {
     if (_sum_distances > STATECHANGE_DIST && state == GO_TO_GOAL) {
         state = OBSTACLE_AVOID;
+        printf("[Robot %d] switching to OBSTACLE_AVOID (sum distances: %d)\n", robot_id, _sum_distances);
     } else if (target_valid) {
         state = GO_TO_GOAL;
     } else {
@@ -466,8 +467,8 @@ int compute_path_to_target() {
         Point2d start = {my_pos[0], my_pos[1]};
         Point2d goal = {target[0][0], target[0][1]};
 
-        DBG(("[Robot %d] called compute_path_to_target(): start is my pos (%.2f, %.2f), goal is first task in list (%.2f, %.2f)\n",
-             robot_id, my_pos[0], my_pos[1], target[0][0], target[0][1]));
+        // DBG(("[Robot %d] called compute_path_to_target(): start is my pos (%.2f, %.2f), goal is first task in list (%.2f, %.2f)\n",
+        //      robot_id, my_pos[0], my_pos[1], target[0][0], target[0][1]));
 
         // Call pathfinding to get the waypoint path
         // get_path returns the path distance (sum of segment lengths), or -1 if no path
@@ -484,12 +485,12 @@ int compute_path_to_target() {
         if (path_distance > 0 && count > 0) {
             waypoint_count = count;
             current_waypoint_idx = 0;
-            DBG(("  > new path with %d waypoints, distance %.3f\n",
-                 waypoint_count, path_distance));
+            // DBG(("  > new path with %d waypoints, distance %.3f\n",
+            //      waypoint_count, path_distance));
             return 1;
         } else {
-            DBG(("  > failed to compute path to target (%.3f, %.3f)\n",
-                 goal.x, goal.y));
+            // DBG(("  > failed to compute path to target (%.3f, %.3f)\n",
+            //      goal.x, goal.y));
             waypoint_count = 0;
             return 0;
         }
@@ -534,14 +535,14 @@ void update_self_motion(int msl, int msr) {
 void compute_avoid_obstacle(int* msl, int* msr, int distances[]) {
     int d1 = 0, d2 = 0;                 // Motor speed 1 and 2
     int sensor_nb;                      // FOR-loop counters
-    const int sensor_sensitivity = 50;  // Not sure what this does
+    //const int sensor_sensitivity = 50;  // Not sure what this does
 
     for (sensor_nb = 0; sensor_nb < NB_SENSORS; sensor_nb++) {
-        d1 += (distances[sensor_nb] - sensor_sensitivity) * Interconn[sensor_nb] * 5;
-        d2 += (distances[sensor_nb] - sensor_sensitivity) * Interconn[sensor_nb + NB_SENSORS] * 5;
+        d1 += (distances[sensor_nb]) * Interconn[sensor_nb] * 1;
+        d2 += (distances[sensor_nb]) * Interconn[sensor_nb + NB_SENSORS] * 1;
     }
-    d1 /= 80;
-    d2 /= 80;  // Normalizing speeds
+    d1 /= 20;
+    d2 /= 20;  // Normalizing speeds
 
     *msr = d1 + BIAS_SPEED;
     *msl = d2 + BIAS_SPEED;
@@ -560,12 +561,15 @@ void compute_go_to_point(int* msl, int* msr, double goal_x, double goal_y) {
     float y = a * sinf(my_pos[2]) + b * cosf(my_pos[2]);  // y in robot coordinates
 
     float Ku = 0.2;               // Forward control coefficient
-    float Kw = 10.0;              // Rotational control coefficient
+    float Kw = 15.0;              // Rotational control coefficient
     float range = 1;              // sqrtf(x*x + y*y);   // Distance to the wanted position
     float bearing = atan2(y, x);  // Orientation of the wanted position
 
     // Compute forward control
     float u = Ku * range * cosf(bearing);
+    if (u < 0) {
+        u = 0; 
+    }
     // Compute rotational control
     float w = Kw * range * sinf(bearing);
 
@@ -592,6 +596,7 @@ void run(int ms) {
         distances[sensor_nb] = wb_distance_sensor_get_value(ds[sensor_nb]);
         sum_distances += distances[sensor_nb];
     }
+    // printf("Robot %d Sensor reading %d\n", robot_id, sum_distances);
 
     // Get info from supervisor
     receive_updates();
@@ -650,8 +655,8 @@ void run(int ms) {
 
                     compute_path_to_target();
                     travel_start_time = sim_clock;  // Mark when travel started
-                    DBG(("[Robot %d] (t=%dms) started travelling to first of %d tasks (%d waypoints)\n",
-                         robot_id, sim_clock, target_list_length, waypoint_count));
+                    // DBG(("[Robot %d] (t=%dms) started travelling to first of %d tasks (%d waypoints)\n",
+                    //      robot_id, sim_clock, target_list_length, waypoint_count));
                 }
 
                 // If we have waypoints, navigate through them
@@ -662,8 +667,8 @@ void run(int ms) {
                     // Check if we've reached the current waypoint
                     double dist_to_waypoint = dist(my_pos[0], my_pos[1], current_waypoint.x, current_waypoint.y);
                     if (dist_to_waypoint < WAYPOINT_ARRIVAL_THRESHOLD) {
-                        DBG(("[Robot %d] (t=%dms) waypoint %d/%d (%.2f, %.2f) reached",
-                             robot_id, sim_clock, current_waypoint_idx + 1, waypoint_count, current_waypoint.x, current_waypoint.y));
+                        // DBG(("[Robot %d] (t=%dms) waypoint %d/%d (%.2f, %.2f) reached",
+                        //      robot_id, sim_clock, current_waypoint_idx + 1, waypoint_count, current_waypoint.x, current_waypoint.y));
                         current_waypoint_idx++;
                         if (current_waypoint_idx >= waypoint_count) {
                             // Reached final destination - track battery consumed during travel
@@ -671,17 +676,17 @@ void run(int ms) {
                             msr = 0;
                             int travel_time_ms = sim_clock - travel_start_time;
                             battery_time_used += travel_time_ms;
-                            DBG(("; arrived at task - traveled for %dms; total battery used: %dms / %dms (%.2f %%)\n",
-                                 travel_time_ms, battery_time_used, MAX_BATTERY_LIFETIME, (battery_time_used * 100.0) / MAX_BATTERY_LIFETIME));
-                            DBG(("    > resetting waypoints and travel time for next task\n"));
+                            // DBG(("; arrived at task - traveled for %dms; total battery used: %dms / %dms (%.2f %%)\n",
+                            //      travel_time_ms, battery_time_used, MAX_BATTERY_LIFETIME, (battery_time_used * 100.0) / MAX_BATTERY_LIFETIME));
+                            // DBG(("    > resetting waypoints and travel time for next task\n"));
                             waypoint_count = 0;  // Reset path for next target
                             current_waypoint_idx = 0;
                             travel_start_time = 0;
                         } else {
                             // Move to next waypoint
                             compute_go_to_point(&msl, &msr, waypoint_path[current_waypoint_idx].x, waypoint_path[current_waypoint_idx].y);
-                            DBG(("; moving to waypoint %d/%d (%.2f, %.2f)\n",
-                                 current_waypoint_idx + 1, waypoint_count, waypoint_path[current_waypoint_idx].x, waypoint_path[current_waypoint_idx].y));
+                            // DBG(("; moving to waypoint %d/%d (%.2f, %.2f)\n",
+                            //      current_waypoint_idx + 1, waypoint_count, waypoint_path[current_waypoint_idx].x, waypoint_path[current_waypoint_idx].y));
                         }
                     } else {
                         // Move towards current waypoint

@@ -373,6 +373,11 @@ class Supervisor {
                     time_at_task = (event->task_type_ == TASK_TYPE_A) ? 9000 : 1000;
                 }
                 robot_battery_used[event->assigned_to_] += time_at_task;
+                printf("[SUPER_Robot %d] (t=%dms) used %dms battery at task (battery used so far: %dms)\n",
+                       event->assigned_to_,
+                       (int)clock_,
+                       time_at_task,
+                       robot_battery_used[event->assigned_to_]);
 
                 num_events_handled_++;
                 event->markDone(clock_);
@@ -446,7 +451,7 @@ class Supervisor {
                     event->assigned_to_ = event->best_bidder_;
                     event_queue.emplace_back(event.get(), MSG_EVENT_WON);  // FIXME?
                     auction = NULL;
-                    printf("W robot %d won event %d\n", event->assigned_to_, event->id_);
+                    //printf("W robot %d won event %d\n", event->assigned_to_, event->id_);
 
                     // Restart (incl. announce) if no bids
                 } else {
@@ -463,7 +468,7 @@ class Supervisor {
         for (int i = 0; i < NUM_ROBOTS; ++i) {
             const double* robot_pos = getRobotPos(i);
             double delta[2] = {robot_pos[0] - stat_robot_prev_pos_[i][0], robot_pos[1] - stat_robot_prev_pos_[i][1]};
-            if ((delta[0] + delta[1]) > 0.0) {
+            if (sqrt(delta[0] * delta[0] + delta[1] * delta[1]) > 0.001) {
                 robot_battery_used[i] += step_size;
             }
             stat_total_distance_ += sqrt(delta[0] * delta[0] + delta[1] * delta[1]);
