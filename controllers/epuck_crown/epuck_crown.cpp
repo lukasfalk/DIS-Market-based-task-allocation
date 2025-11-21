@@ -252,46 +252,89 @@ static void receive_updates() {
             // current_waypoint_idx = 0;
         }
         // check if new event is being auctioned
-        else if (msg.event_state == MSG_EVENT_NEW) {
-            indx = target_list_length;
+else if (msg.event_state == MSG_EVENT_NEW) {
+    indx = 0;
+    double d;
+    int whereInsert=-1;
 
-            // Calculate actual path distance using pathfinding (accounts for walls/obstacles)
-            Point2d start = {my_pos[0], my_pos[1]};
-            Point2d goal = {msg.event_x, msg.event_y};
-            Point2d temp_waypoint_buffer[MAX_PATH_LENGTH];
-            double d = get_path(start, goal, temp_waypoint_buffer, MAX_PATH_LENGTH);
+    // --- INITIALIZATION FIX ---
+    if (target_list_length == 0) {
+        // Case 0: List is empty. Cost is simply path from Me -> Event
+        Point2d start = {my_pos[0], my_pos[1]};
+        Point2d goal = {msg.event_x, msg.event_y};
+        Point2d temp_waypoint_buffer[MAX_PATH_LENGTH];
+        
+        d = get_path(start, goal, temp_waypoint_buffer, MAX_PATH_LENGTH);
+        if (d < 0) d = dist(my_pos[0], my_pos[1], msg.event_x, msg.event_y);
+    
+    } else {
+        // List has items. Initialize d to Infinity so we find the true lowest insertion cost.
+        d = 100000000.0; 
+        
+        Point2d temp_waypoint_buffer[MAX_PATH_LENGTH]; // Buffer for A*
 
-            // If pathfinding failed, use Euclidean distance as fallback
-            if (d < 0) {
-                d = dist(my_pos[0], my_pos[1], msg.event_x, msg.event_y);
+        // Iterate through every existing task to find the best insertion slot
+        for(int i = 0; i < target_list_length; i++){
+            
+            double current_insertion_cost = 0;
+            
+            // --- CASE 1: Insertion at the START ---
+            if(i == 0){
+                // Cost: (Me->New) + (New->Task[0]) - (Me->Task[0])
+                double dbeforetogoal = get_path((Point2d){my_pos[0], my_pos[1]}, (Point2d){msg.event_x, msg.event_y}, temp_waypoint_buffer, MAX_PATH_LENGTH); 
+                double daftertogoal = get_path((Point2d){target[i][0], target[i][1]}, (Point2d){msg.event_x, msg.event_y}, temp_waypoint_buffer, MAX_PATH_LENGTH);
+                double dbeforetodafter = get_path((Point2d){my_pos[0], my_pos[1]}, (Point2d){target[i][0], target[i][1]}, temp_waypoint_buffer, MAX_PATH_LENGTH);
+                whereInsert = 0;
+                current_insertion_cost = dbeforetogoal + daftertogoal - dbeforetodafter;
+            }
+            // --- CASE 2: Insertion in the MIDDLE --- 
+            else {
+                // Cost: (Prev->New) + (New->Curr) - (Prev->Curr)
+                double dbeforetogoal = get_path((Point2d){target[i-1][0], target[i-1][1]}, (Point2d){msg.event_x, msg.event_y}, temp_waypoint_buffer, MAX_PATH_LENGTH);
+                double daftertogoal = get_path((Point2d){target[i][0], target[i][1]}, (Point2d){msg.event_x, msg.event_y}, temp_waypoint_buffer, MAX_PATH_LENGTH);
+                double dbeforetodafter = get_path((Point2d){target[i-1][0], target[i-1][1]}, (Point2d){target[i][0], target[i][1]}, temp_waypoint_buffer, MAX_PATH_LENGTH);
+                whereInsert = 1;
+                current_insertion_cost = dbeforetogoal + daftertogoal - dbeforetodafter;
             }
 
-            int time_at_task = get_pause_duration_ms(robot_specialization, msg.task_type);
-            int time_to_travel = (d / 0.5) * 1000 + 1000;  // Assuming average speed of 0.5 m/s (converted to ms) + 1s overhead for collisions and other delays
+            // CHECK: Is this insertion better than what we found so far?
+            if(current_insertion_cost < d){
+                d = current_insertion_cost;
+                indx = i;
+            }
+            // --- CASE 3: Appending to the END ---
+            // --- NESTING FIX: This check happens for EVERY loop, but only triggers on the last item ---
+            if(i == target_list_length - 1){
+                // The cost to append is simply distance from Last Task -> New Event
+                double d_append = get_path((Point2d){target[i][0], target[i][1]}, (Point2d){msg.event_x, msg.event_y}, temp_waypoint_buffer, MAX_PATH_LENGTH);
 
-            // Check battery: if accepting this task would exceed battery life, add penalty
-            int battery_time_left = MAX_BATTERY_LIFETIME - battery_time_used;
-
-            if (time_to_travel + time_at_task > battery_time_left) {
-                // This task would cause us to run out of battery - bid very high to refuse it
-                DBG(("[Robot %d] declining task %d: need %dms but only %dms battery left\n",
-                     robot_id, msg.event_id, time_to_travel + time_at_task, battery_time_left));
-            } else {
-                // We have enough battery - use normal bidding (time to complete task)
-                double final_bid = 1.5 * time_to_travel + time_at_task - 0.01 * battery_time_left;
-                // 100% battery:  1.5 * 11200 + 5000 - 0.01 * 120000 = 16800 + 5000 - 1200 = 20600
-                // 50% battery:   1.5 * 11200 + 5000 - 0.01 * 60000  = 16800 + 5000 - 600  = 21200
-                // 10% battery:   1.5 * 11200 + 5000 - 0.01 * 12000  = 16800 + 5000 - 120  = 21680
-                // Thus, more battery left results in a slightly cheaper/stronger bid (more attractive)
-
-                // Send my bid to the supervisor
-                const bid_t my_bid = {robot_id, msg.event_id, final_bid, indx};
-                DBG(("[Robot %d] sending bid for event %d with value %.2f at index %d\n",
-                     robot_id, msg.event_id, final_bid, indx));
-                wb_emitter_set_channel(emitter_tag, robot_id + 1);
-                wb_emitter_send(emitter_tag, &my_bid, sizeof(bid_t));
+                if(d_append < d) {
+                    d = d_append;
+                    indx = i + 1; // Insert AFTER the last element
+                    whereInsert = 2;
+                }
             }
         }
+    }
+
+    // --- BIDDING LOGIC (Battery & Time) ---
+    // Use 'd' (which is now the optimized marginal path distance)
+    int time_at_task = get_pause_duration_ms(robot_specialization, msg.task_type); 
+    int time_to_travel = (d / 0.5) * 1000 + 1000; 
+
+    int battery_time_left = MAX_BATTERY_LIFETIME - battery_time_used;
+
+    if (time_to_travel + time_at_task > battery_time_left) {
+        // Battery Refusal
+        DBG(("[Robot %d] declining task\n", robot_id));
+    } else {
+        double final_bid = 1.5 * time_to_travel + time_at_task - 0.01 * battery_time_left;
+        const bid_t my_bid = {robot_id, msg.event_id, final_bid, indx};
+        DBG(("Robot inserted task at %d \n", whereInsert));
+        wb_emitter_set_channel(emitter_tag, robot_id + 1);
+        wb_emitter_send(emitter_tag, &my_bid, sizeof(bid_t));
+    }
+}
     }
 
     // Communication with physics plugin (channel 0)
