@@ -622,8 +622,6 @@ class Supervisor {
             double ehr = ((double)num_events_handled_) / clock_s;
             double perf = ((double)num_events_handled_) / stat_total_distance_;
 
-            printf("Handled %d events in %d seconds, events handled per second = %.2f\n", num_events_handled_,
-                   (int)clock_ / 1000, ehr);
 
             // print proximity matrix (seconds)
             printf("*********PROXIMTY TO OTHER ROBOTS*********\n\n");
@@ -650,7 +648,8 @@ class Supervisor {
             for (int i = 0; i < NUM_ROBOTS; ++i) {
                 printf("Battery usage for robot %d: %dms, which corresponds to %.2f %% of total battery life\n", i, robot_battery_used[i], (robot_battery_used[i]) / static_cast<double>(MAX_BATTERY_LIFETIME) * 100.0);
             }
-
+            printf("Handled %d events in %d seconds, events handled per second = %.2f\n", num_events_handled_,
+                   (int)clock_ / 1000, ehr);
             printf("Performance: %f\n", perf);
             return false;
         } else {
