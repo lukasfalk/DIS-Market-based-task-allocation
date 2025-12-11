@@ -15,13 +15,14 @@ NUM_ROBOTA = 2
 NUM_ROBOTB = 3
 
 # Times (Microscopic definitions)
-AVG_TRAVEL_TIME = 15.0
-TIME_ROBOTA = 3.0
-TIME_ROBOTB = 9.0
-TIME_OBSTACLE_AVOID = 2.0 
+AVG_TRAVEL_TIME = 4.52
+TIME_ROBOTA = 3
+TIME_ROBOTB = 1
+TIME_OBSTACLE_AVOID = 1.82 
+TIME_IDLE_PER_TASK = 6.83
 
 # Probability (Microscopic definition)
-BID_PROBABILITY = 0.02
+BID_PROBABILITY = DT / (TIME_IDLE_PER_TASK)  # Based on average idle time per task
 
 # ==========================================
 # 2. MACROSCOPIC PARAMETER DERIVATION

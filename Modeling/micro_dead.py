@@ -8,23 +8,26 @@ import matplotlib.pyplot as plt
 DT = 0.1 
 
 # --- MOVEMENT & WORK ---
-AVG_TRAVEL_TIME = 15.0 
-TIME_ROBOTA = 3.0  
-TIME_ROBOTB = 9.0   
+AVG_TRAVEL_TIME = 4.5+1.82 # Sum of travel, obstacle avoid, and average work times 
+TIME_ROBOTA = 3  
+TIME_ROBOTB = 1   
 
 # --- BIDDING MECHANISM ---
-BID_PROBABILITY = 0.02 
+TIME_IDLE_PER_TASK=6.83
+
+#calculate the probability to end up as the time idle per task, given dt
+BID_PROBABILITY = DT / TIME_IDLE_PER_TASK
 
 # --- BATTERY CONSTRAINTS ---
 # "it can move or complete a task only for 2 minutes"
-MAX_BATTERY_LIFE = 120.0 
+MAX_BATTERY_LIFE = 180.0 
 
 # Project Constraints
 NUM_ROBOTS = 5
 NUM_ROBOTA = 2 
 NUM_ROBOTB = 3 
 SIM_DURATION = 180.0 
-NUM_RUNS = 50 
+NUM_RUNS = 50
 
 # States
 STATE_IDLE = 0
