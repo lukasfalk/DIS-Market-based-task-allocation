@@ -21,6 +21,10 @@
 #include <webots/robot.h>
 #include <webots/supervisor.h>
 
+#include <algorithm>
+#include <array>
+#include <vector>
+
 #include "../common/communication.hpp"
 #include "../common/constants.hpp"
 #include "../common/geometry.hpp"
@@ -31,44 +35,53 @@
 WbDeviceTag left_motor;   // handler for left wheel of the robot
 WbDeviceTag right_motor;  // handler for the right wheel of the robot
 
+// Logging macro, configured with prefix "[Robot {ID} @ t={TIME}ms] "
 #define LOG(fmt, ...)                                                                  \
     do {                                                                               \
         char prefix[64];                                                               \
         snprintf(prefix, sizeof(prefix), "[Robot %d @ t=%dms] ", robot_id, sim_clock); \
-        log_msg(prefix, fmt, ##__VA_ARGS__);                                           \
+        logMsg(prefix, fmt, ##__VA_ARGS__);                                            \
     } while (0)
 
-typedef enum {
+enum class RobotState {
     STAY = 1,
     GO_TO_GOAL = 2,  // Initial state aliases
     OBSTACLE_AVOID = 3,
     RANDOM_WALK = 4,
     DEAD = 5,  // Robot is out of battery
-} robot_state_t;
+};
 
-#define DEFAULT_STATE (STAY)
+constexpr RobotState DEFAULT_STATE = RobotState::STAY;
 
 // Weights for the Braitenberg algorithm
 // NOTE: Weights from reynolds2.h
-int Interconn[16] = {17, 29, 34, 10, 8, -38, -56, -76, -72, -58, -36, 8, 10, 36, 28, 18};
+constexpr std::array<int, 16> Interconn = {17,  29,  34,  10, 8,  -38, -56, -76,
+                                           -72, -58, -36, 8,  10, 36,  28,  18};
 
 // The state variables
 int sim_clock;                   // Simulation clock in milliseconds
 uint16_t robot_id;               // Unique robot ID
 RobotSpec robot_specialization;  // Specialization type of this robot wrt task types (A or B)
-robot_state_t state;             // State of the robot
+RobotState state;                // State of the robot
 double my_pos[3];                // X, Z, Theta of this robot
-char target_valid;               // boolean; whether we are supposed to go to the target
-double target[99][3];            // x and z coordinates of target position (max 99 targets)
-int lmsg, rmsg;                  // Communication variables
-int indx;                        // Event index to be sent to the supervisor
+bool target_valid = false;       // boolean; whether we are supposed to go to the target
 
-float buff[99];  // Buffer for physics plugin
+struct Target {
+    double x;
+    double y;
+    int id;
+};
+std::vector<Target> targets;
+
+int lmsg, rmsg;  // Communication variables
+int indx;        // Event index to be sent to the supervisor
+
+std::vector<float> buff;  // Buffer for physics plugin
 
 // Pathfinding and waypoint following
-Point2d waypoint_path[MAX_PATH_LENGTH];  // Computed path waypoints
-int waypoint_count = 0;                  // Number of waypoints in current path
-int current_waypoint_idx = 0;            // Index of next waypoint to reach
+PathPlanner planner;                 // Global path planner instance
+std::vector<Point2d> waypoint_path;  // Computed path waypoints
+int current_waypoint_idx = 0;        // Index of next waypoint to reach
 
 double stat_max_velocity;
 
@@ -103,9 +116,6 @@ static WbDeviceTag ds[NB_SENSORS];  // Handle for the infrared distance sensors
 // Check if we received a message and extract information
 static void receive_updates() {
     MessageT msg;
-    int target_list_length = 0;
-    int i;
-    int k;
 
     while (wb_receiver_get_queue_length(receiver_tag) > 0) {
         const MessageT* pmsg = (const MessageT*)wb_receiver_get_data(receiver_tag);
@@ -117,27 +127,21 @@ static void receive_updates() {
         // Double check this message is for me
         // Communication should be on specific channel per robot
         // channel = robot_id + 1, channel 0 reserved for physics plguin
-        if (msg.robot_id != robot_id) {
-            fprintf(stderr, "Invalid message: robot_id %d doesn't match receiver %d\n", msg.robot_id,
+        if (msg.robotId != robot_id) {
+            fprintf(stderr, "Invalid message: robot_id %d doesn't match receiver %d\n", msg.robotId,
                     robot_id);
             exit(1);
         }
 
-        // Find target list length
-        target_list_length = 0;
-        while (target[target_list_length][2] != INVALID) {
-            target_list_length++;
-        }
-
-        if (target_list_length == 0) target_valid = 0;
+        if (targets.empty()) target_valid = false;
 
         // Event state machine
-        if (msg.msg_type == MSG_GPS_ONLY) {
-            my_pos[0] = msg.robot_x;
-            my_pos[1] = msg.robot_y;
+        if (msg.msgType == MSG_GPS_ONLY) {
+            my_pos[0] = msg.robotX;
+            my_pos[1] = msg.robotY;
             my_pos[2] = msg.heading;
             continue;
-        } else if (msg.msg_type == MSG_QUIT) {
+        } else if (msg.msgType == MSG_QUIT) {
             // Simulation is done!
             // Output remaining battery life, clean up and exit
             LOG("END OF SIM! Battery used: %dms (%.2f %% of total)\n", battery_time_used,
@@ -150,30 +154,24 @@ static void receive_updates() {
 
             wb_robot_cleanup();
             exit(0);
-        } else if (msg.msg_type == MSG_EVENT_DONE) {
-            // If event is done, delete it from array
-            for (i = 0; i <= target_list_length; i++) {
-                if ((int)target[i][2] ==
-                    msg.event_id) {  // Look for correct id (in case wrong event was done first)
-                    for (; i <= target_list_length; i++) {  // Push list to the left from event index
-                        target[i][0] = target[i + 1][0];
-                        target[i][1] = target[i + 1][1];
-                        target[i][2] = target[i + 1][2];
-                    }
-                }
+        } else if (msg.msgType == MSG_EVENT_DONE) {
+            // If event is done, delete it from vector
+            auto it = std::remove_if(targets.begin(), targets.end(),
+                                     [&](const Target& t) { return t.id == msg.eventId; });
+            if (it != targets.end()) {
+                targets.erase(it, targets.end());
             }
-            // Adjust target list length
-            if (target_list_length - 1 == 0) target_valid = 0;  // Used in general state machine
-            target_list_length = target_list_length - 1;
+
+            if (targets.empty()) target_valid = false;
 
             // Stop and pause based on robot type and event type
             wb_motor_set_velocity(left_motor, 0.0);
             wb_motor_set_velocity(right_motor, 0.0);
             // set pause deadline (sim_clock is in ms)
-            int task_time_ms = get_pause_duration_ms(robot_specialization, msg.task_type);
+            int task_time_ms = get_pause_duration_ms(robot_specialization, msg.taskType);
             pause_until = sim_clock + task_time_ms;
             pause_active = 1;
-            state = STAY;
+            state = RobotState::STAY;
 
             // Update battery consumption for this task
             // 1. Consumption during travel
@@ -191,55 +189,129 @@ static void receive_updates() {
                 MAX_BATTERY_LIFETIME);
 
             // Reset waypoint path for next target
-            waypoint_count = 0;
+            waypoint_path.clear();
             current_waypoint_idx = 0;
-        } else if (msg.msg_type == MSG_EVENT_WON) {
+        } else if (msg.msgType == MSG_EVENT_WON) {
             // Insert event at index
-            LOG("Won bid for task %d, adding to list of tasks at index %d\n", msg.event_id,
-                msg.event_index);
-            for (i = target_list_length; i >= msg.event_index; i--) {
-                target[i + 1][0] = target[i][0];
-                target[i + 1][1] = target[i][1];
-                target[i + 1][2] = target[i][2];
-            }
-            target[msg.event_index][0] = msg.event_x;
-            target[msg.event_index][1] = msg.event_y;
-            target[msg.event_index][2] = msg.event_id;
-            target_valid = 1;  // used in general state machine
-            target_list_length = target_list_length + 1;
+            LOG("Won bid for task %d, adding to list of tasks at index %d\n", msg.eventId, msg.eventIndex);
 
-            // DBG(("  > and resetting waypoint path (currently at %d/%d waypoints, for task 0/%d)\n",
-            // current_waypoint_idx + 1, waypoint_count, target_list_length));
-            // // Reset waypoint path - we'll compute a new path to this target
-            // waypoint_count = 0;
-            // current_waypoint_idx = 0;
+            Target new_target = {msg.eventX, msg.eventY, msg.eventId};
+            if (msg.eventIndex >= 0 && msg.eventIndex <= (int)targets.size()) {
+                targets.insert(targets.begin() + msg.eventIndex, new_target);
+            } else {
+                targets.push_back(new_target);
+            }
+
+            target_valid = true;
         }
         // check if new event is being auctioned
-        else if (msg.msg_type == MSG_EVENT_NEW) {
-            indx = target_list_length;
+        else if (msg.msgType == MSG_EVENT_NEW) {
+            indx = 0;
+            double d;
+            int whereInsert = -1;
 
-            // Calculate actual path distance using pathfinding (accounts for walls/obstacles)
-            Point2d start = {my_pos[0], my_pos[1]};
-            Point2d goal = {msg.event_x, msg.event_y};
-            Point2d temp_waypoint_buffer[MAX_PATH_LENGTH];
-            double d = get_path(start, goal, temp_waypoint_buffer, MAX_PATH_LENGTH);
+            // --- INITIALIZATION FIX ---
+            if (targets.empty()) {
+                // Case 0: List is empty. Cost is simply path from Me -> Event
+                Point2d start = {my_pos[0], my_pos[1]};
+                Point2d goal = {msg.eventX, msg.eventY};
 
-            // If pathfinding failed, use Euclidean distance as fallback
-            if (d < 0) {
-                d = utils::dist(my_pos[0], my_pos[1], msg.event_x, msg.event_y);
+                Path path = planner.findPath(start, goal);
+                d = path.waypoints.empty() ? -1.0 : path.totalDistance;
+
+                if (d < 0) d = utils::dist(my_pos[0], my_pos[1], msg.eventX, msg.eventY);
+
+            } else {
+                // List has items. Initialize d to Infinity so we find the true lowest insertion cost.
+                d = 100000000.0;
+
+                // Iterate through every existing task to find the best insertion slot
+                for (size_t i = 0; i < targets.size(); i++) {
+                    double current_insertion_cost = 0;
+
+                    // --- CASE 1: Insertion at the START ---
+                    if (i == 0) {
+                        // Cost: (Me->New) + (New->Task[0]) - (Me->Task[0])
+                        Path p1 = planner.findPath({my_pos[0], my_pos[1]}, {msg.eventX, msg.eventY});
+                        Path p2 = planner.findPath({targets[i].x, targets[i].y}, {msg.eventX, msg.eventY});
+                        Path p3 = planner.findPath({my_pos[0], my_pos[1]}, {targets[i].x, targets[i].y});
+
+                        double dbeforetogoal =
+                            p1.waypoints.empty() ? utils::dist(my_pos[0], my_pos[1], msg.eventX, msg.eventY)
+                                                 : p1.totalDistance;
+                        double daftertogoal = p2.waypoints.empty() ? utils::dist(targets[i].x, targets[i].y,
+                                                                                 msg.eventX, msg.eventY)
+                                                                   : p2.totalDistance;
+                        double dbeforetodafter =
+                            p3.waypoints.empty()
+                                ? utils::dist(my_pos[0], my_pos[1], targets[i].x, targets[i].y)
+                                : p3.totalDistance;
+
+                        whereInsert = 0;
+                        current_insertion_cost = dbeforetogoal + daftertogoal - dbeforetodafter;
+                    }
+                    // --- CASE 2: Insertion in the MIDDLE ---
+                    else {
+                        // Cost: (Prev->New) + (New->Curr) - (Prev->Curr)
+                        Path p1 = planner.findPath({targets[i - 1].x, targets[i - 1].y},
+                                                   {msg.eventX, msg.eventY});
+                        Path p2 = planner.findPath({targets[i].x, targets[i].y}, {msg.eventX, msg.eventY});
+                        Path p3 = planner.findPath({targets[i - 1].x, targets[i - 1].y},
+                                                   {targets[i].x, targets[i].y});
+
+                        double dbeforetogoal =
+                            p1.waypoints.empty()
+                                ? utils::dist(targets[i - 1].x, targets[i - 1].y, msg.eventX, msg.eventY)
+                                : p1.totalDistance;
+                        double daftertogoal = p2.waypoints.empty() ? utils::dist(targets[i].x, targets[i].y,
+                                                                                 msg.eventX, msg.eventY)
+                                                                   : p2.totalDistance;
+                        double dbeforetodafter = p3.waypoints.empty()
+                                                     ? utils::dist(targets[i - 1].x, targets[i - 1].y,
+                                                                   targets[i].x, targets[i].y)
+                                                     : p3.totalDistance;
+
+                        whereInsert = 1;
+                        current_insertion_cost = dbeforetogoal + daftertogoal - dbeforetodafter;
+                    }
+
+                    // CHECK: Is this insertion better than what we found so far?
+                    if (current_insertion_cost < d) {
+                        d = current_insertion_cost;
+                        indx = i;
+                    }
+                    // --- CASE 3: Appending to the END ---
+                    // --- NESTING FIX: This check happens for EVERY loop, but only triggers on the last
+                    // item ---
+                    if (i == targets.size() - 1) {
+                        // The cost to append is simply distance from Last Task -> New Event
+                        Path p_append =
+                            planner.findPath({targets[i].x, targets[i].y}, {msg.eventX, msg.eventY});
+                        double d_append =
+                            p_append.waypoints.empty()
+                                ? utils::dist(targets[i].x, targets[i].y, msg.eventX, msg.eventY)
+                                : p_append.totalDistance;
+
+                        if (d_append < d) {
+                            d = d_append;
+                            indx = i + 1;  // Insert AFTER the last element
+                            whereInsert = 2;
+                        }
+                    }
+                }
             }
 
-            int time_at_task = get_pause_duration_ms(robot_specialization, msg.task_type);
-            int time_to_travel =
-                (d / 0.5) * 1000 + 1000;  // Assuming average speed of 0.5 m/s (converted to ms) + 1s
-                                          // overhead for collisions and other delays
+            int time_at_task = get_pause_duration_ms(robot_specialization, msg.taskType);
+            int time_to_travel = (d / 0.5) * 1000 + 1000;  // Assuming average speed of 0.5 m/s (converted
+                                                           // to ms) + 1s overhead for collisions and other
+                                                           // delays
 
             // Check battery: if accepting this task would exceed battery life, add penalty
             int battery_time_left = MAX_BATTERY_LIFETIME - battery_time_used;
 
             if (time_to_travel + time_at_task > battery_time_left) {
                 // This task would cause us to run out of battery - bid very high to refuse it
-                LOG("declining task %d: need %dms but only %dms battery left\n", msg.event_id,
+                LOG("declining task %d: need %dms but only %dms battery left\n", msg.eventId,
                     time_to_travel + time_at_task, battery_time_left);
             } else {
                 // We have enough battery - use normal bidding (time to complete task)
@@ -250,9 +322,9 @@ static void receive_updates() {
                 // Thus, more battery left results in a slightly cheaper/stronger bid (more attractive)
 
                 // Send my bid to the supervisor
-                const BidT my_bid = {robot_id, msg.event_id, final_bid, indx};
-                LOG("sending bid for event %d with value %.2f at index %d\n", msg.event_id, final_bid,
-                    indx);
+                const BidT my_bid = {robot_id, msg.eventId, final_bid, indx};
+                LOG("sending bid for event %d with value %.2f at index %d (insertion type %d)\n",
+                    msg.eventId, final_bid, indx, whereInsert);
                 wb_emitter_set_channel(emitter_tag, robot_id + 1);
                 wb_emitter_send(emitter_tag, &my_bid, sizeof(BidT));
             }
@@ -260,38 +332,27 @@ static void receive_updates() {
     }
 
     // Communication with physics plugin (channel 0)
-    i = 0;
-    k = 1;
-
-    // Find target list length
-    target_list_length = 0;
-    while (target[target_list_length][2] != INVALID) {
-        target_list_length++;
-    }
-
-    if (target_list_length > 0) {
+    if (!targets.empty()) {
         // Line from my position to first target
         wb_emitter_set_channel(emitter_tag, 0);
-        buff[0] = BREAK;  // draw new line
-        buff[1] = my_pos[0];
-        buff[2] = my_pos[1];
-        buff[3] = target[0][0];
-        buff[4] = target[0][1];
+
+        buff.clear();
+        buff.push_back(BREAK);
+        buff.push_back(my_pos[0]);
+        buff.push_back(my_pos[1]);
+        buff.push_back(targets[0].x);
+        buff.push_back(targets[0].y);
+
         // Lines between targets
-        for (i = 5; i < 5 * target_list_length - 1; i = i + 5) {
-            buff[i] = BREAK;
-            buff[i + 1] = buff[i - 2];
-            buff[i + 2] = buff[i - 1];
-            buff[i + 3] = target[k][0];
-            buff[i + 4] = target[k][1];
-            k++;
+        for (size_t k = 1; k < targets.size(); ++k) {
+            buff.push_back(BREAK);
+            buff.push_back(targets[k - 1].x);
+            buff.push_back(targets[k - 1].y);
+            buff.push_back(targets[k].x);
+            buff.push_back(targets[k].y);
         }
-        // send, reset channel
-        if (target[0][2] == INVALID) {
-            buff[0] = my_pos[0];
-            buff[1] = my_pos[1];
-        }
-        wb_emitter_send(emitter_tag, &buff, (5 * target_list_length) * sizeof(float));
+
+        wb_emitter_send(emitter_tag, buff.data(), buff.size() * sizeof(float));
         wb_emitter_set_channel(emitter_tag, robot_id + 1);
     }
 }
@@ -323,12 +384,9 @@ void reset(void) {
     battery_time_used = 0;
     travel_start_time = 0;
 
-    // Init target positions to "INVALID"
-    for (i = 0; i < 99; i++) {
-        target[i][0] = 0;
-        target[i][1] = 0;
-        target[i][2] = INVALID;
-    }
+    // Init target positions
+    targets.clear();
+    waypoint_path.clear();
 
     // Start in the DEFAULT_STATE
     state = DEFAULT_STATE;
@@ -371,10 +429,10 @@ void reset(void) {
 }
 
 void update_state(int _sum_distances) {
-    if (_sum_distances > STATECHANGE_DIST && state == GO_TO_GOAL) {
-        state = OBSTACLE_AVOID;
+    if (_sum_distances > STATECHANGE_DIST && state == RobotState::GO_TO_GOAL) {
+        state = RobotState::OBSTACLE_AVOID;
     } else if (target_valid) {
-        state = GO_TO_GOAL;
+        state = RobotState::GO_TO_GOAL;
     } else {
         state = DEFAULT_STATE;
     }
@@ -383,35 +441,27 @@ void update_state(int _sum_distances) {
 // Compute optimal path to next target using visibility graph pathfinding
 // Returns true if a path was found, false otherwise
 int compute_path_to_target() {
-    if (target_valid && waypoint_count == 0) {
+    if (target_valid && waypoint_path.empty() && !targets.empty()) {
         // Convert current position to Point2d
         Point2d start = {my_pos[0], my_pos[1]};
-        Point2d goal = {target[0][0], target[0][1]};
+        Point2d goal = {targets[0].x, targets[0].y};
 
         LOG("Called compute_path_to_target(): start is my pos (%.2f, %.2f), goal is first task "
             "in list (%.2f, %.2f)\n",
-            my_pos[0], my_pos[1], target[0][0], target[0][1]);
+            my_pos[0], my_pos[1], targets[0].x, targets[0].y);
 
         // Call pathfinding to get the waypoint path
-        // get_path returns the path distance (sum of segment lengths), or -1 if no path
-        // It fills waypoint_path array with the waypoints
-        double path_distance = get_path(start, goal, waypoint_path, MAX_PATH_LENGTH);
+        Path path = planner.findPath(start, goal);
 
-        // Count the actual waypoints by iterating until we hit an invalid point
-        // (The path starts at start, ends at goal, and includes intermediate waypoints)
-        int count = 0;
-        while (count < MAX_PATH_LENGTH && (waypoint_path[count].x != 0 || waypoint_path[count].y != 0)) {
-            count++;
-        }
-
-        if (path_distance > 0 && count > 0) {
-            waypoint_count = count;
+        if (!path.waypoints.empty()) {
+            waypoint_path = path.waypoints;
             current_waypoint_idx = 0;
-            LOG("  > New path with %d waypoints, distance %.3f\n", waypoint_count, path_distance);
+            LOG("  > New path with %d waypoints, distance %.3f\n", (int)waypoint_path.size(),
+                path.totalDistance);
             return 1;
         } else {
             LOG("  > Failed to compute path to target (%.3f, %.3f)\n", goal.x, goal.y);
-            waypoint_count = 0;
+            waypoint_path.clear();
             return 0;
         }
     }
@@ -446,23 +496,27 @@ void update_self_motion(int msl, int msr) {
 
     // Keep track of highest velocity for modelling
     double velocity = du * 1000.0 / (double)TIME_STEP;
-    if (state == GO_TO_GOAL && velocity > stat_max_velocity) {
+    if (state == RobotState::GO_TO_GOAL && velocity > stat_max_velocity) {
         stat_max_velocity = velocity;
     }
 }
 
 // Compute wheel speed to avoid obstacles
 void compute_avoid_obstacle(int* msl, int* msr, int distances[]) {
-    int d1 = 0, d2 = 0;                 // Motor speed 1 and 2
-    int sensor_nb;                      // FOR-loop counters
-    const int sensor_sensitivity = 50;  // Not sure what this does
+    int d1 = 0, d2 = 0;  // Motor speed 1 and 2
+    int sensor_nb;       // FOR-loop counters
+    // const int sensor_sensitivity = 50;  // Not sure what this does
 
     for (sensor_nb = 0; sensor_nb < NB_SENSORS; sensor_nb++) {
-        d1 += (distances[sensor_nb] - sensor_sensitivity) * Interconn[sensor_nb] * 5;
-        d2 += (distances[sensor_nb] - sensor_sensitivity) * Interconn[sensor_nb + NB_SENSORS] * 5;
+        // d1 += (distances[sensor_nb] - sensor_sensitivity) * Interconn[sensor_nb] * 5;
+        // d2 += (distances[sensor_nb] - sensor_sensitivity) * Interconn[sensor_nb + NB_SENSORS] * 5;
+        d1 += (distances[sensor_nb]) * Interconn[sensor_nb] * 1;
+        d2 += (distances[sensor_nb]) * Interconn[sensor_nb + NB_SENSORS] * 1;
     }
-    d1 /= 80;
-    d2 /= 80;  // Normalizing speeds
+
+    // Normalizing speeds
+    d1 /= 20;
+    d2 /= 20;
 
     *msr = d1 + BIAS_SPEED;
     *msl = d2 + BIAS_SPEED;
@@ -487,6 +541,7 @@ void compute_go_to_point(int* msl, int* msr, double goal_x, double goal_y) {
 
     // Compute forward control
     float u = Ku * range * cosf(bearing);
+    u = std::max(0.0f, u);  // No backward movement
     // Compute rotational control
     float w = Kw * range * sinf(bearing);
 
@@ -517,7 +572,7 @@ void run(int ms) {
     // Get info from supervisor
     receive_updates();
 
-    if (state == DEAD) {
+    if (state == RobotState::DEAD) {
         // Only step the robot clock forward and return
         sim_clock += ms;
         return;
@@ -525,7 +580,7 @@ void run(int ms) {
 
     // Check if battery has been depleted to switch to DEAD state
     if (battery_time_used >= MAX_BATTERY_LIFETIME) {
-        state = DEAD;
+        state = RobotState::DEAD;
         LOG("BATTERY DEPLETED! (used %dms / %dms max)\n", battery_time_used, MAX_BATTERY_LIFETIME);
 
         // Motors off, stay immobile
@@ -553,42 +608,33 @@ void run(int ms) {
         update_state(sum_distances);
 
         switch (state) {
-            case STAY:
+            case RobotState::STAY:
                 msl = 0;
                 msr = 0;
                 break;
 
-            case GO_TO_GOAL:
+            case RobotState::GO_TO_GOAL:
 
                 // Compute path to the first target if we haven't already
-                if (waypoint_count == 0) {
-                    // Find target list length
-                    int target_list_length = 0;
-                    while (target[target_list_length][2] != INVALID) {
-                        target_list_length++;
-                    }
-
+                if (waypoint_path.empty()) {
                     compute_path_to_target();
                     travel_start_time = sim_clock;  // Mark when travel started
-                    LOG("Started travelling to first of %d tasks (%d waypoints)\n", target_list_length,
-                        waypoint_count);
+                    LOG("Started travelling to first of %d tasks (%d waypoints)\n", (int)targets.size(),
+                        (int)waypoint_path.size());
                 }
 
                 // If we have waypoints, navigate through them
-                if (waypoint_count > 0) {
+                if (!waypoint_path.empty()) {
                     Point2d current_waypoint = waypoint_path[current_waypoint_idx];
-                    // LOG("Current waypoint: %d/%d (%.2f, %.2f)\n", current_waypoint_idx + 1,
-                    // waypoint_count,
-                    //     current_waypoint.x, current_waypoint.y);
 
                     // Check if we've reached the current waypoint
                     double dist_to_waypoint =
                         utils::dist(my_pos[0], my_pos[1], current_waypoint.x, current_waypoint.y);
                     if (dist_to_waypoint < WAYPOINT_ARRIVAL_THRESHOLD) {
                         LOG("Waypoint %d/%d (%.2f, %.2f) reached\n", current_waypoint_idx + 1,
-                            waypoint_count, current_waypoint.x, current_waypoint.y);
+                            (int)waypoint_path.size(), current_waypoint.x, current_waypoint.y);
                         current_waypoint_idx++;
-                        if (current_waypoint_idx >= waypoint_count) {
+                        if (current_waypoint_idx >= (int)waypoint_path.size()) {
                             // Reached final destination - track battery consumed during travel
                             msl = 0;
                             msr = 0;
@@ -599,7 +645,7 @@ void run(int ms) {
                                 travel_time_ms, battery_time_used, MAX_BATTERY_LIFETIME,
                                 (battery_time_used * 100.0) / MAX_BATTERY_LIFETIME);
                             LOG("    > Resetting waypoints and travel time for next task\n");
-                            waypoint_count = 0;  // Reset path for next target
+                            waypoint_path.clear();  // Reset path for next target
                             current_waypoint_idx = 0;
                             travel_start_time = 0;
                         } else {
@@ -607,7 +653,7 @@ void run(int ms) {
                             compute_go_to_point(&msl, &msr, waypoint_path[current_waypoint_idx].x,
                                                 waypoint_path[current_waypoint_idx].y);
                             LOG("  > Moving to waypoint %d/%d (%.2f, %.2f)\n", current_waypoint_idx + 1,
-                                waypoint_count, waypoint_path[current_waypoint_idx].x,
+                                (int)waypoint_path.size(), waypoint_path[current_waypoint_idx].x,
                                 waypoint_path[current_waypoint_idx].y);
                         }
                     } else {
@@ -621,16 +667,16 @@ void run(int ms) {
                 }
                 break;
 
-            case OBSTACLE_AVOID:
+            case RobotState::OBSTACLE_AVOID:
                 compute_avoid_obstacle(&msl, &msr, distances);
                 break;
 
-            case RANDOM_WALK:
+            case RobotState::RANDOM_WALK:
                 msl = 400;
                 msr = 400;
                 break;
 
-            case DEAD:
+            case RobotState::DEAD:
                 break;
 
             default:
