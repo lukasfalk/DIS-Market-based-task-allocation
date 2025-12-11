@@ -433,7 +433,7 @@ Robot {
     }
   ]
   name "supervisor"
-  controller "auct_super"
+  controller "supervisor_cent"
   supervisor TRUE
 }
 DEF e0 Transform {
@@ -611,26 +611,28 @@ DEF e9 Transform {
 DEF e-puck0 epuck_rangeColA {
   translation 0.459002 0.06 8.03486e-05
   name "e-puck0"
-  controller "epuck_crown"
+  controller "epuck_cent"
+  emitter_channel 1
+  receiver_channel 1
 }
 DEF e-puck1 epuck_rangeColA {
   translation -0.44 -0.15 -6.39625e-05
   name "e-puck1"
-  controller "epuck_crown"
+  controller "epuck_cent"
   emitter_channel 2
   receiver_channel 2
 }
 DEF e-puck2 epuck_rangeColB {
   translation 0.18 -0.34 -6.39615e-05
   name "e-puck2"
-  controller "epuck_crown"
+  controller "epuck_cent"
   emitter_channel 3
   receiver_channel 3
 }
 DEF e-puck3 epuck_rangeColB {
   translation -0.1 0.41 -6.3962e-05
   name "e-puck3"
-  controller "epuck_crown"
+  controller "epuck_cent"
   emitter_channel 4
   receiver_channel 4
 }
@@ -638,7 +640,7 @@ DEF e-puck4 epuck_rangeColB {
   translation -0.476769 0.574344 -6.3962e-05
   rotation 0 1 0 0
   name "e-puck4"
-  controller "epuck_crown"
+  controller "epuck_cent"
   emitter_channel 5
   receiver_channel 5
 }
