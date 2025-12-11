@@ -1,8 +1,9 @@
 #ifndef GEOMETRY_HPP
 #define GEOMETRY_HPP
 
+#include <algorithm>
 #include <cmath>
-#include <iostream>
+
 
 // Represents a 2D point in the arena
 struct Point2d {

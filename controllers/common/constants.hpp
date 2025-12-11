@@ -10,8 +10,6 @@
 #define MAX_EVENTS 10
 #define MAX_RUNTIME (3 * 60 * 1000)
 
-#define BREAK -999  // for physics plugin
-
 // --- Robot ---
 #define MAX_BATTERY_LIFETIME (2 * 60 * 1000)
 
@@ -34,6 +32,11 @@
 #define RX_PERIOD 2
 
 // --- Other ---
+#ifndef M_PI  // Define M_PI if not already defined (needed for some compilers)
+#define M_PI 3.14159265358979323846
+#endif
+
+#define BREAK -999  // for physics plugin
 #define INVALID -999
 
 #endif  // CONSTANTS_HPP
