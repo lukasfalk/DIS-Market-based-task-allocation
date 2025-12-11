@@ -68,10 +68,10 @@ USE_C_API = true
 # --- Project-specific build configuration ---
 
 # Compile both controller and pathfinding as C++
-CXX_SOURCES = epuck_crown.cpp pathfinding.cpp
+CXX_SOURCES = epuck_crown.cpp ../common/pathfinding.cpp
 
 # Include paths for finding headers
-INCLUDE = -I"$(WEBOTS_HOME_PATH)/include" -I.
+INCLUDE = -I"$(WEBOTS_HOME_PATH)/include" -I. -I../common
 
 ### Do not modify: this includes Webots global Makefile.include
 null :=
