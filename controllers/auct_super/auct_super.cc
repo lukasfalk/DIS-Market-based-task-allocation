@@ -15,7 +15,9 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <iomanip>
 #include <memory>
+#include <sstream>
 #include <vector>
 
 using namespace std;
@@ -31,10 +33,12 @@ using namespace std;
 #include <webots/supervisor.h>
 
 #include "../common/communication.hpp"
+#include "../common/constants.hpp"
 #include "../common/geometry.hpp"
 #include "../common/logging.hpp"
 #include "../common/map_config.hpp"
 #include "../common/pathfinding.hpp"
+#include "../common/utils.hpp"
 
 uint64_t g_sim_time = 0;
 
@@ -44,12 +48,7 @@ uint64_t g_sim_time = 0;
         snprintf(prefix, sizeof(prefix), "[Supervisor @ t=%llums] ", (unsigned long long)g_sim_time); \
         log_msg(prefix, fmt, ##__VA_ARGS__);                                                          \
     } while (0)
-#define RAND ((float)rand() / RAND_MAX)
 
-#define MAX_ROBOTS 9
-#define MAX_EVENTS 10
-
-#define STEP_SIZE 64          // simulation step size
 #define AUCTION_TIMEOUT 1000  // number of steps after which an auction stops
 
 #define EVENT_RANGE (0.05)             // distance within which a robot must come to do event
@@ -60,11 +59,8 @@ uint64_t g_sim_time = 0;
 #define PROXIMITY_THRESHOLD (0.20)  // distance below which robots are considered in collision
 
 // Parameters that can be changed
-#define NUM_ROBOTS 5                          // Change this also in the epuck_crown.c!
-#define NUM_ACTIVE_EVENTS 10                  // number of active events
-#define TOTAL_EVENTS_TO_HANDLE 999            // Events after which simulation stops or...
-#define MAX_RUNTIME (3 * 60 * 1000)           // ...total runtime after which simulation stops
-#define MAX_BATTERY_LIFETIME (2 * 60 * 1000)  // 2 minutes of battery life in ms
+#define NUM_ACTIVE_EVENTS 10        // number of active events
+#define TOTAL_EVENTS_TO_HANDLE 999  // Events after which simulation stops or...
 
 #define MAX_WALLS 2
 
@@ -99,8 +95,8 @@ void test_interior_wall_detection() {
 double gauss(void) {
     double x1, x2, w;
     do {
-        x1 = 2.0 * RAND - 1.0;
-        x2 = 2.0 * RAND - 1.0;
+        x1 = 2.0 * utils::random_01() - 1.0;
+        x2 = 2.0 * utils::random_01() - 1.0;
         w = x1 * x1 + x2 * x2;
     } while (w >= 1.0);
 
@@ -118,8 +114,8 @@ Point2d rand_coord() {
     Point2d candidate;
     int attempts = 0;
     do {
-        candidate.x = ARENA_MIN + (ARENA_MAX - ARENA_MIN) * RAND;
-        candidate.y = ARENA_MIN + (ARENA_MAX - ARENA_MIN) * RAND;
+        candidate.x = ARENA_MIN + (ARENA_MAX - ARENA_MIN) * utils::random_01();
+        candidate.y = ARENA_MIN + (ARENA_MAX - ARENA_MIN) * utils::random_01();
         attempts++;
     } while (MapConfig::isPointInInteriorWall(candidate));
 
@@ -127,8 +123,8 @@ Point2d rand_coord() {
 }
 
 double expovariate(double mu) {
-    double uniform = RAND;
-    while (uniform < 1e-7) uniform = RAND;
+    double uniform = utils::random_01();
+    while (uniform < 1e-7) uniform = utils::random_01();
     return -log(uniform) * mu;
 }
 
@@ -156,8 +152,9 @@ class Event {
     Event(uint16_t id)
         : id_(id),
           pos_(rand_coord()),
-          type_(RAND < (1.0f / 3.0f) ? TASK_TYPE_A
-                                     : TASK_TYPE_B),  // 1/3 of the time task type A, 2/3 of the time type B
+          type_(utils::random_01() < (1.0f / 3.0f)
+                    ? TASK_TYPE_A
+                    : TASK_TYPE_B),  // 1/3 of the time task type A, 2/3 of the time type B
           assigned_to_(-1),
           t_announced_(-1),
           best_bidder_(-1),
@@ -642,17 +639,19 @@ class Supervisor {
             // print proximity matrix (seconds)
             LOG("*********PROXIMTY TO OTHER ROBOTS*********\n\n");
             for (int i = 0; i < NUM_ROBOTS; ++i) {
-                LOG("Robot %d:", i);
+                // Print proximity times for robot i to all other robots j in one line
+                stringstream ss;
+                ss << "Robot " << i << ": ";
                 for (int j = 0; j < NUM_ROBOTS; ++j) {
-                    LOG(" %.2f", proximity_time_[i][j]);
+                    ss << j << ": " << fixed << std::setprecision(2) << proximity_time_[i][j];
+                    if (j < NUM_ROBOTS - 1) ss << ", ";
                 }
-                LOG("\n");
+                LOG("%s\n", ss.str().c_str());
             }
             // print wall proximity times
-            LOG("*********PROXIMTY TO WALL*********\n");
+            LOG("*********PROXIMITY TO WALL*********\n");
             for (int i = 0; i < NUM_ROBOTS; ++i) {
-                LOG("Robot %d was near a wall for %.2f seconds:", i, proximity_wall_time_[i]);
-                LOG("\n");
+                LOG("Robot %d was near a wall for %.2f seconds.\n", i, proximity_wall_time_[i]);
             }
 
             // final metric for any proximity
@@ -665,8 +664,7 @@ class Supervisor {
             for (int i = 0; i < NUM_ROBOTS; ++i) {
                 LOG("Battery usage for robot %d: %dms, which corresponds to %.2f %% of total battery "
                     "life\n",
-                    i, robot_battery_used[i],
-                    (robot_battery_used[i]) / static_cast<double>(MAX_BATTERY_LIFETIME) * 100.0);
+                    i, robot_battery_used[i], (robot_battery_used[i] * 100.0) / MAX_BATTERY_LIFETIME);
             }
 
             LOG("Performance: %f\n", perf);
@@ -697,147 +695,18 @@ int main(void) {
     // initialization
     wb_robot_init();
     link_event_nodes();
-    wb_robot_step(STEP_SIZE);
+    wb_robot_step(TIME_STEP);
 
     srand(time(NULL));
     supervisor.reset();
 
     // start the controller
     LOG("Starting main loop...\n");
-    while (wb_robot_step(STEP_SIZE) != -1) {
-        if (!supervisor.step(STEP_SIZE)) break;  // break at return = false
+    while (wb_robot_step(TIME_STEP) != -1) {
+        if (!supervisor.step(TIME_STEP)) break;  // break at return = false
     }
     wb_supervisor_simulation_reset_physics();
     wb_robot_cleanup();
     exit(0);
     return 0;
 }
-
-// --- TIME TO TEST THE PATHFINDING STUFF ---
-/*
-#include "../epuck_crown/pathfinding.hpp"
-
-void visualize_graph(PathPlanner* planner) {
-    // Note: Webots drawing API requires access to the supervisor node root.
-    // The drawing functions in Webots are basic and limited.
-    // For now, we'll skip direct visualization as it requires complex Webots API usage.
-    // Instead, you can verify the pathfinding visually by:
-    // 1. Plotting the waypoints in Rviz or similar
-    // 2. Adding debug output to the PathPlanner
-    // 3. Using the e-puck's motion to trace the path
-
-    if (!planner) return;
-
-    const auto& nodes = planner->getNodes();
-    const auto& adj_matrix = planner->getAdjMatrix();
-
-    printf("=== Visibility Graph Visualization ===\n");
-    printf("Number of nodes: %zu\n", nodes.size());
-    printf("Nodes:\n");
-    for (size_t i = 0; i < nodes.size(); ++i) {
-        printf("  Node %zu ('%c'): (%.3f, %.3f)\n", i, nodes[i].id, nodes[i].pos.x, nodes[i].pos.y);
-    }
-
-    printf("\nEdges (adjacency matrix):\n");
-    int edge_count = 0;
-    for (size_t i = 0; i < nodes.size(); ++i) {
-        for (size_t j = i + 1; j < nodes.size(); ++j) {
-            if (adj_matrix[i][j] > 0) {
-                printf("  Edge %d: Node %zu ('%c') <-> Node %zu ('%c'), distance: %.3f\n",
-                       edge_count++, i, nodes[i].id, j, nodes[j].id, adj_matrix[i][j]);
-            } else {
-                printf("  No edge between Node %zu and Node %zu (value: %.3f)\n", i, j, adj_matrix[i][j]);
-            }
-        }
-    }
-    printf("Total edges: %d\n", edge_count);
-}
-
-void visualize_path(const std::vector<Point2d>& path) {
-    if (path.size() < 2) {
-        printf("Path is empty or contains only 1 point.\n");
-        return;
-    }
-
-    printf("=== Path Visualization ===\n");
-    printf("Path length: %zu waypoints\n", path.size());
-    double total_distance = 0.0;
-
-    for (size_t i = 0; i < path.size(); ++i) {
-        printf("  Waypoint %zu: (%.3f, %.3f)\n", i, path[i].x, path[i].y);
-
-        if (i > 0) {
-            double segment_dist = path[i].distance(path[i - 1]);
-            total_distance += segment_dist;
-            printf("    -> distance from previous: %.3f\n", segment_dist);
-        }
-    }
-    printf("Total path distance: %.3f\n", total_distance);
-}
-
-int main(void) {
-    Supervisor supervisor{};
-    PathPlanner planner;  // Create an instance of your planner
-
-    // initialization
-    wb_robot_init();
-    link_event_nodes();
-    wb_robot_step(STEP_SIZE);
-
-    srand(time(NULL));
-    supervisor.reset();
-
-    // Visualize the visibility graph
-    printf("\n");
-    visualize_graph(&planner);
-    printf("\n");
-
-    // Test pathfinding with a few test cases
-    printf("=== Running Pathfinding Test Cases ===\n\n");
-
-    // --- TEST CASE 1: Simple, unobstructed path ---
-    printf("[Test Case 1] Unobstructed path\n");
-    Point2d start1 = {0.48, 0.2};   // in top right quadrant
-    Point2d goal1 = {0.16, -0.53};  // in bottom right quadrant under the vertical wall
-    printf(">> start: (%.3f, %.3f), goal: (%.3f, %.3f)\n", start1.x, start1.y, goal1.x, goal1.y);
-    std::vector<Point2d> path1 = planner.findPath(start1, goal1);
-    visualize_path(path1);
-    printf("\n");
-
-    // --- TEST CASE 2: Path around one wall short ---
-    printf("[Test Case 2] Path around one wall (short)\n");
-    Point2d goal2 = {-0.3, -0.4};  // in bottom left quadrant under+left of the vertical wall
-    printf(">> start: (%.3f, %.3f), goal: (%.3f, %.3f)\n", start1.x, start1.y, goal2.x, goal2.y);
-    std::vector<Point2d> path2 = planner.findPath(start1, goal2);
-    visualize_path(path2);
-    printf("\n");
-
-    // --- TEST CASE 3: Path around one wall longer ---
-    printf("[Test Case 3] Path around one wall (longer)\n");
-    Point2d goal3 = {-0.38, -0.15};  // in bottom left quadrant left of the vertical wall & under the
-horizontal wall printf(">> start: (%.3f, %.3f), goal: (%.3f, %.3f)\n", start1.x, start1.y, goal3.x,
-goal3.y); std::vector<Point2d> path3 = planner.findPath(start1, goal3); visualize_path(path3); printf("\n");
-
-    // --- TEST CASE 4: Path around two walls ---
-    printf("[Test Case 4] Path around two walls\n");
-    Point2d goal4 = {-0.4, 0.16};  // in top left quadrant left of vertical wall & above horizontal wall
-    printf(">> start: (%.3f, %.3f), goal: (%.3f, %.3f)\n", start1.x, start1.y, goal4.x, goal4.y);
-    std::vector<Point2d> path4 = planner.findPath(start1, goal4);
-    visualize_path(path4);
-    printf("\n");
-
-    // --- TEST CASE 5: Edge case - start and goal are the same ---
-    printf("[Test Case 5] Start equals goal\n");
-    Point2d goal5 = {start1.x, start1.y};  // same as start
-    printf(">> start: (%.3f, %.3f), goal: (%.3f, %.3f)\n", start1.x, start1.y, goal5.x, goal5.y);
-    std::vector<Point2d> path5 = planner.findPath(start1, goal5);
-    visualize_path(path5);
-    printf("\n");
-
-    printf("=== Pathfinding Tests Complete ===\n");
-
-    wb_robot_cleanup();
-    exit(0);
-    return 0;
-}
-    */

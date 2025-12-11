@@ -22,13 +22,14 @@
 #include <webots/supervisor.h>
 
 #include "../common/communication.hpp"
+#include "../common/constants.hpp"
 #include "../common/geometry.hpp"
 #include "../common/logging.hpp"
 #include "../common/pathfinding.hpp"
+#include "../common/utils.hpp"
 
-#define MAX_SPEED_WEB 6.28  // Maximum speed webots
-WbDeviceTag left_motor;     // handler for left wheel of the robot
-WbDeviceTag right_motor;    // handler for the right wheel of the robot
+WbDeviceTag left_motor;   // handler for left wheel of the robot
+WbDeviceTag right_motor;  // handler for the right wheel of the robot
 
 #define LOG(fmt, ...)                                                                  \
     do {                                                                               \
@@ -36,27 +37,6 @@ WbDeviceTag right_motor;    // handler for the right wheel of the robot
         snprintf(prefix, sizeof(prefix), "[Robot %d @ t=%dms] ", robot_id, sim_clock); \
         log_msg(prefix, fmt, ##__VA_ARGS__);                                           \
     } while (0)
-
-#define TIME_STEP 64  // Timestep (ms)
-#define RX_PERIOD 2   // time difference between two received elements (ms) (1000)
-
-#define AXLE_LENGTH 0.052         // Distance between wheels of robot (meters)
-#define SPEED_UNIT_RADS 0.00628   // Conversion factor from speed unit to radian per second
-#define WHEEL_RADIUS 0.0205       // Wheel radius (meters)
-#define DELTA_T TIME_STEP / 1000  // Timestep (seconds)
-#define MAX_SPEED 800             // Maximum speed
-
-#define INVALID -999
-#define BREAK -999  // for physics plugin
-
-#define NUM_ROBOTS 5  // Change this also in the supervisor!
-#define MAX_RUNTIME (3 * 60 * 1000)
-
-/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
-/* Collective decision parameters */
-
-#define STATECHANGE_DIST \
-    10  // minimum value of all sensor inputs combined to change to obstacle avoidance mode
 
 typedef enum {
     STAY = 1,
@@ -67,12 +47,6 @@ typedef enum {
 } robot_state_t;
 
 #define DEFAULT_STATE (STAY)
-
-/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
-/* e-Puck parameters */
-
-#define NB_SENSORS 8
-#define BIAS_SPEED 400
 
 // Weights for the Braitenberg algorithm
 // NOTE: Weights from reynolds2.h
@@ -92,11 +66,9 @@ int indx;                        // Event index to be sent to the supervisor
 float buff[99];  // Buffer for physics plugin
 
 // Pathfinding and waypoint following
-#define MAX_PATH_LENGTH 50
-Point2d waypoint_path[MAX_PATH_LENGTH];          // Computed path waypoints
-int waypoint_count = 0;                          // Number of waypoints in current path
-int current_waypoint_idx = 0;                    // Index of next waypoint to reach
-const double WAYPOINT_ARRIVAL_THRESHOLD = 0.01;  // Distance in meters to consider waypoint reached
+Point2d waypoint_path[MAX_PATH_LENGTH];  // Computed path waypoints
+int waypoint_count = 0;                  // Number of waypoints in current path
+int current_waypoint_idx = 0;            // Index of next waypoint to reach
 
 double stat_max_velocity;
 
@@ -105,9 +77,8 @@ int pause_until = 0;
 int pause_active = 0;
 
 // Battery tracking (in milliseconds)
-#define MAX_BATTERY_LIFETIME (2 * 60 * 1000)  // 2 minutes of battery life in ms (matches supervisor)
-int battery_time_used = 0;                    // Time spent traveling and at tasks (in ms)
-int travel_start_time = 0;                    // Timestamp when this travel phase started (ms)
+int battery_time_used = 0;  // Time spent traveling and at tasks (in ms)
+int travel_start_time = 0;  // Timestamp when this travel phase started (ms)
 
 // Return pause duration (ms) based on robot specialization and task type (customize as needed)
 static int get_pause_duration_ms(RobotSpec robot_specialization, TaskType task_type) {
@@ -128,18 +99,6 @@ static WbDeviceTag ds[NB_SENSORS];  // Handle for the infrared distance sensors
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 /* helper functions */
-
-// Generate random number in [0,1]
-double rnd(void) { return ((double)rand()) / ((double)RAND_MAX); }
-
-void limit(int* number, int limit) {
-    if (*number > limit) *number = limit;
-    if (*number < -limit) *number = -limit;
-}
-
-double dist(double x0, double y0, double x1, double y1) {
-    return sqrt((x0 - x1) * (x0 - x1) + (y0 - y1) * (y0 - y1));
-}
 
 // Check if we received a message and extract information
 static void receive_updates() {
@@ -267,7 +226,7 @@ static void receive_updates() {
 
             // If pathfinding failed, use Euclidean distance as fallback
             if (d < 0) {
-                d = dist(my_pos[0], my_pos[1], msg.event_x, msg.event_y);
+                d = utils::dist(my_pos[0], my_pos[1], msg.event_x, msg.event_y);
             }
 
             int time_at_task = get_pause_duration_ms(robot_specialization, msg.task_type);
@@ -507,8 +466,8 @@ void compute_avoid_obstacle(int* msl, int* msr, int distances[]) {
 
     *msr = d1 + BIAS_SPEED;
     *msl = d2 + BIAS_SPEED;
-    limit(msl, MAX_SPEED);
-    limit(msr, MAX_SPEED);
+    utils::limit(msl, MAX_SPEED);
+    utils::limit(msr, MAX_SPEED);
 }
 
 // Computes wheel speed to move towards a goal point using proportional control
@@ -522,7 +481,7 @@ void compute_go_to_point(int* msl, int* msr, double goal_x, double goal_y) {
     float y = a * sinf(my_pos[2]) + b * cosf(my_pos[2]);  // y in robot coordinates
 
     float Ku = 0.2;               // Forward control coefficient
-    float Kw = 10.0;              // Rotational control coefficient
+    float Kw = 20.0;              // Rotational control coefficient
     float range = 1;              // sqrtf(x*x + y*y);   // Distance to the wanted position
     float bearing = atan2(y, x);  // Orientation of the wanted position
 
@@ -534,8 +493,8 @@ void compute_go_to_point(int* msl, int* msr, double goal_x, double goal_y) {
     // Convert to wheel speeds!
     *msl = 50 * (u - AXLE_LENGTH * w / 2.0) / WHEEL_RADIUS;
     *msr = 50 * (u + AXLE_LENGTH * w / 2.0) / WHEEL_RADIUS;
-    limit(msl, MAX_SPEED);
-    limit(msr, MAX_SPEED);
+    utils::limit(msl, MAX_SPEED);
+    utils::limit(msr, MAX_SPEED);
 }
 
 // RUN e-puck
@@ -624,7 +583,7 @@ void run(int ms) {
 
                     // Check if we've reached the current waypoint
                     double dist_to_waypoint =
-                        dist(my_pos[0], my_pos[1], current_waypoint.x, current_waypoint.y);
+                        utils::dist(my_pos[0], my_pos[1], current_waypoint.x, current_waypoint.y);
                     if (dist_to_waypoint < WAYPOINT_ARRIVAL_THRESHOLD) {
                         LOG("Waypoint %d/%d (%.2f, %.2f) reached\n", current_waypoint_idx + 1,
                             waypoint_count, current_waypoint.x, current_waypoint.y);
