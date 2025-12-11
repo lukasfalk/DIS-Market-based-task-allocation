@@ -32,10 +32,18 @@ using namespace std;
 
 #include "../common/communication.hpp"
 #include "../common/geometry.hpp"
+#include "../common/logging.hpp"
 #include "../common/map_config.hpp"
 #include "../common/pathfinding.hpp"
 
-#define DBG(x) printf x
+uint64_t g_sim_time = 0;
+
+#define LOG(fmt, ...)                                                                                 \
+    do {                                                                                              \
+        char prefix[64];                                                                              \
+        snprintf(prefix, sizeof(prefix), "[Supervisor @ t=%llums] ", (unsigned long long)g_sim_time); \
+        log_msg(prefix, fmt, ##__VA_ARGS__);                                                          \
+    } while (0)
 #define RAND ((float)rand() / RAND_MAX)
 
 #define MAX_ROBOTS 9
@@ -201,7 +209,7 @@ class Event {
             if (f_color_direct)
                 wb_supervisor_field_set_sf_color(f_color_direct, red);
             else
-                DBG(("Warning: couldn't set event node color (no material/color field)\n"));
+                LOG("Warning: couldn't set event node color (no material/color field)\n");
         }
     }
 
@@ -269,7 +277,7 @@ class Supervisor {
     double proximity_time_[NUM_ROBOTS][NUM_ROBOTS];
     bool proximity_state_[NUM_ROBOTS][NUM_ROBOTS];
 
-    typedef vector<pair<Event*, MessageState>> event_queue_t;
+    typedef vector<pair<Event*, MessageType>> event_queue_t;
 
    private:
     // wall struct
@@ -307,7 +315,7 @@ class Supervisor {
         sprintf(node_name, kRobotNameFormat, id);
         robots_[id] = wb_supervisor_node_get_from_def(node_name);
         if (!robots_[id]) {
-            DBG(("Missing node for robot #%d\n", id));
+            LOG("Missing node for robot #%d\n", id);
             exit(1);
         }
 
@@ -315,7 +323,7 @@ class Supervisor {
         sprintf(node_name, kReceiverNameFormat, id);
         receivers_[id] = wb_robot_get_device(node_name);
         if (!receivers_[id]) {
-            DBG(("Missing receiver for robot #%d\n", id));
+            LOG("Missing receiver for robot #%d\n", id);
             exit(1);
         }
         wb_receiver_enable(receivers_[id], 2);  // 32
@@ -370,7 +378,7 @@ class Supervisor {
             double dist = event->pos_.distance(robot_pos_pt);
 
             if (dist <= EVENT_RANGE) {
-                printf("D robot %d reached event %d\n", event->assigned_to_, event->id_);
+                LOG("Robot %d reached event %d\n", event->assigned_to_, event->id_);
 
                 // Calculate battery usage for time spent at the task completing it
                 int time_at_task = 0;
@@ -443,7 +451,7 @@ class Supervisor {
                 event->t_announced_ = clock_;
                 event_queue.emplace_back(event.get(), MSG_EVENT_NEW);
                 auction = event.get();
-                printf("A event %d announced\n", event->id_);
+                LOG("Event %d announced\n", event->id_);
 
                 // End early or restart, if timed out
             } else if (clock_ - event->t_announced_ > EVENT_TIMEOUT) {
@@ -454,7 +462,7 @@ class Supervisor {
                     event->assigned_to_ = event->best_bidder_;
                     event_queue.emplace_back(event.get(), MSG_EVENT_WON);  // FIXME?
                     auction = NULL;
-                    printf("W robot %d won event %d\n", event->assigned_to_, event->id_);
+                    LOG("Robot %d won event %d\n", event->assigned_to_, event->id_);
 
                     // Restart (incl. announce) if no bids
                 } else {
@@ -488,6 +496,7 @@ class Supervisor {
     // Reset robots & events
     void reset() {
         clock_ = 0;
+        g_sim_time = 0;
 
         // initialize & link events
         next_event_id_ = 0;
@@ -527,7 +536,7 @@ class Supervisor {
         // initialize the emitter
         emitter_ = wb_robot_get_device("sup_emitter");
         if (!emitter_) {
-            DBG(("Missing supervisor emitter!\n"));
+            LOG("Missing supervisor emitter!\n");
             exit(1);
         }
     }
@@ -535,6 +544,7 @@ class Supervisor {
     // Do a step
     bool step(uint64_t step_size) {
         clock_ += step_size;
+        g_sim_time = clock_;
 
         // Events that will be announced next or that have just been assigned/done
         event_queue_t event_queue;
@@ -566,7 +576,7 @@ class Supervisor {
                 if (event->is_assigned()) {
                     event_queue.emplace_back(event, MSG_EVENT_WON);
                     auction = NULL;
-                    printf("W robot %d won event %d\n", event->assigned_to_, event->id_);
+                    LOG("Robot %d won event %d\n", event->assigned_to_, event->id_);
                 }
 
                 wb_receiver_next_packet(receivers_[i]);
@@ -595,7 +605,7 @@ class Supervisor {
 
             for (const auto& e_es_tuple : event_queue) {
                 const Event* event = e_es_tuple.first;
-                const MessageState msg_type = e_es_tuple.second;
+                const MessageType msg_type = e_es_tuple.second;
                 if (event->is_assigned() && event->assigned_to_ != i) continue;
 
                 buildMessage(i, event, msg_type, &msg);
@@ -617,7 +627,7 @@ class Supervisor {
         // Time to end the experiment?
         if (num_events_handled_ >= TOTAL_EVENTS_TO_HANDLE || (MAX_RUNTIME > 0 && clock_ >= MAX_RUNTIME)) {
             for (int i = 0; i < NUM_ROBOTS; i++) {
-                // DBG(("Sending MSG_QUIT message to robot %d\n", i));
+                // LOG("Sending MSG_QUIT message to robot %d\n", i);
                 buildMessage(i, NULL, MSG_QUIT, &msg);
                 wb_emitter_set_channel(emitter_, i + 1);
                 wb_emitter_send(emitter_, &msg, sizeof(MessageT));
@@ -626,41 +636,40 @@ class Supervisor {
             double ehr = ((double)num_events_handled_) / clock_s;
             double perf = ((double)num_events_handled_) / stat_total_distance_;
 
-            printf("Handled %d events in %d seconds, events handled per second = %.2f\n",
-                   num_events_handled_, (int)clock_ / 1000, ehr);
+            LOG("Handled %d events in %d seconds, events handled per second = %.2f\n", num_events_handled_,
+                (int)clock_ / 1000, ehr);
 
             // print proximity matrix (seconds)
-            printf("*********PROXIMTY TO OTHER ROBOTS*********\n\n");
+            LOG("*********PROXIMTY TO OTHER ROBOTS*********\n\n");
             for (int i = 0; i < NUM_ROBOTS; ++i) {
-                printf("Robot %d:", i);
+                LOG("Robot %d:", i);
                 for (int j = 0; j < NUM_ROBOTS; ++j) {
-                    printf(" %.2f", proximity_time_[i][j]);
+                    LOG(" %.2f", proximity_time_[i][j]);
                 }
-                printf("\n");
+                LOG("\n");
             }
             // print wall proximity times
-            printf("*********PROXIMTY TO WALL*********\n");
+            LOG("*********PROXIMTY TO WALL*********\n");
             for (int i = 0; i < NUM_ROBOTS; ++i) {
-                printf("Robot %d was near a wall for %.2f seconds:", i, proximity_wall_time_[i]);
-                printf("\n");
+                LOG("Robot %d was near a wall for %.2f seconds:", i, proximity_wall_time_[i]);
+                LOG("\n");
             }
 
             // final metric for any proximity
-            printf("*********ANY PROXIMITY METRIC*********\n");
-            printf("Total time any robot was near another robot or a wall: %.2f seconds\n",
-                   proximity_any_time_);
+            LOG("*********ANY PROXIMITY METRIC*********\n");
+            LOG("Total time any robot was near another robot or a wall: %.2f seconds\n",
+                proximity_any_time_);
 
             // battery used
-            printf("*********BATTERY USED METRIC*********\n");
+            LOG("*********BATTERY USED METRIC*********\n");
             for (int i = 0; i < NUM_ROBOTS; ++i) {
-                printf(
-                    "Battery usage for robot %d: %dms, which corresponds to %.2f %% of total battery "
+                LOG("Battery usage for robot %d: %dms, which corresponds to %.2f %% of total battery "
                     "life\n",
                     i, robot_battery_used[i],
                     (robot_battery_used[i]) / static_cast<double>(MAX_BATTERY_LIFETIME) * 100.0);
             }
 
-            printf("Performance: %f\n", perf);
+            LOG("Performance: %f\n", perf);
             return false;
         } else {
             return true;
@@ -694,7 +703,7 @@ int main(void) {
     supervisor.reset();
 
     // start the controller
-    printf("Starting main loop...\n");
+    LOG("Starting main loop...\n");
     while (wb_robot_step(STEP_SIZE) != -1) {
         if (!supervisor.step(STEP_SIZE)) break;  // break at return = false
     }

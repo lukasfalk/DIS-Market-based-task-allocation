@@ -23,21 +23,19 @@
 
 #include "../common/communication.hpp"
 #include "../common/geometry.hpp"
-#include "../common/pathfinding.hpp"
 #include "../common/logging.hpp"
+#include "../common/pathfinding.hpp"
 
 #define MAX_SPEED_WEB 6.28  // Maximum speed webots
 WbDeviceTag left_motor;     // handler for left wheel of the robot
 WbDeviceTag right_motor;    // handler for the right wheel of the robot
 
-#define DEBUG 1
-// #define DBG(x) printf x
-
-#define LOG(fmt, ...) do { \
-    char prefix[64]; \
-    snprintf(prefix, sizeof(prefix), "[Robot %d @ t=%dms] ", robot_id, sim_clock); \
-    log_msg(prefix, fmt, ##__VA_ARGS__); \
-} while (0)
+#define LOG(fmt, ...)                                                                  \
+    do {                                                                               \
+        char prefix[64];                                                               \
+        snprintf(prefix, sizeof(prefix), "[Robot %d @ t=%dms] ", robot_id, sim_clock); \
+        log_msg(prefix, fmt, ##__VA_ARGS__);                                           \
+    } while (0)
 
 #define TIME_STEP 64  // Timestep (ms)
 #define RX_PERIOD 2   // time difference between two received elements (ms) (1000)
@@ -175,16 +173,16 @@ static void receive_updates() {
         if (target_list_length == 0) target_valid = 0;
 
         // Event state machine
-        if (msg.type == MSG_GPS_ONLY) {
+        if (msg.msg_type == MSG_GPS_ONLY) {
             my_pos[0] = msg.robot_x;
             my_pos[1] = msg.robot_y;
             my_pos[2] = msg.heading;
             continue;
-        } else if (msg.type == MSG_QUIT) {
+        } else if (msg.msg_type == MSG_QUIT) {
             // Simulation is done!
             // Output remaining battery life, clean up and exit
-            DBG(("[Robot %d] (t=%dms) END OF SIM! Battery used: %dms (%.2f %% of total)\n", robot_id,
-                 sim_clock, battery_time_used, (battery_time_used * 100.0) / MAX_BATTERY_LIFETIME));
+            LOG("END OF SIM! Battery used: %dms (%.2f %% of total)\n", battery_time_used,
+                (battery_time_used * 100.0) / MAX_BATTERY_LIFETIME);
 
             // Stop motors
             wb_motor_set_velocity(left_motor, 0);
@@ -193,7 +191,7 @@ static void receive_updates() {
 
             wb_robot_cleanup();
             exit(0);
-        } else if (msg.type == MSG_EVENT_DONE) {
+        } else if (msg.msg_type == MSG_EVENT_DONE) {
             // If event is done, delete it from array
             for (i = 0; i <= target_list_length; i++) {
                 if ((int)target[i][2] ==
@@ -223,23 +221,23 @@ static void receive_updates() {
             if (travel_start_time > 0) {
                 int travel_time_ms = sim_clock - travel_start_time;
                 battery_time_used += travel_time_ms;
-                DBG(("[Robot %d] (t=%dms) used %dms traveling to task (battery used so far: %dms / %dms)\n",
-                     robot_id, sim_clock, travel_time_ms, battery_time_used, MAX_BATTERY_LIFETIME));
+                LOG("used %dms traveling to task (battery used so far: %dms / %dms)\n", travel_time_ms,
+                    battery_time_used, MAX_BATTERY_LIFETIME);
                 travel_start_time = 0;  // reset
             }
 
             // 2. Consumption at task
             battery_time_used += task_time_ms;
-            DBG(("[Robot %d] (t=%dms) used %dms at task (battery used so far: %dms / %dms)\n", robot_id,
-                 sim_clock, task_time_ms, battery_time_used, MAX_BATTERY_LIFETIME));
+            LOG("used %dms at task (battery used so far: %dms / %dms)\n", task_time_ms, battery_time_used,
+                MAX_BATTERY_LIFETIME);
 
             // Reset waypoint path for next target
             waypoint_count = 0;
             current_waypoint_idx = 0;
-        } else if (msg.type == MSG_EVENT_WON) {
+        } else if (msg.msg_type == MSG_EVENT_WON) {
             // Insert event at index
-            DBG(("[Robot %d] (t=%dms) Won bid for task %d, adding to list of tasks at index %d\n", robot_id,
-                 sim_clock, msg.event_id, msg.event_index));
+            LOG("Won bid for task %d, adding to list of tasks at index %d\n", msg.event_id,
+                msg.event_index);
             for (i = target_list_length; i >= msg.event_index; i--) {
                 target[i + 1][0] = target[i][0];
                 target[i + 1][1] = target[i][1];
@@ -258,7 +256,7 @@ static void receive_updates() {
             // current_waypoint_idx = 0;
         }
         // check if new event is being auctioned
-        else if (msg.type == MSG_EVENT_NEW) {
+        else if (msg.msg_type == MSG_EVENT_NEW) {
             indx = target_list_length;
 
             // Calculate actual path distance using pathfinding (accounts for walls/obstacles)
@@ -282,8 +280,8 @@ static void receive_updates() {
 
             if (time_to_travel + time_at_task > battery_time_left) {
                 // This task would cause us to run out of battery - bid very high to refuse it
-                DBG(("[Robot %d] declining task %d: need %dms but only %dms battery left\n", robot_id,
-                     msg.event_id, time_to_travel + time_at_task, battery_time_left));
+                LOG("declining task %d: need %dms but only %dms battery left\n", msg.event_id,
+                    time_to_travel + time_at_task, battery_time_left);
             } else {
                 // We have enough battery - use normal bidding (time to complete task)
                 double final_bid = 1.5 * time_to_travel + time_at_task - 0.01 * battery_time_left;
@@ -294,8 +292,8 @@ static void receive_updates() {
 
                 // Send my bid to the supervisor
                 const BidT my_bid = {robot_id, msg.event_id, final_bid, indx};
-                DBG(("[Robot %d] sending bid for event %d with value %.2f at index %d\n", robot_id,
-                     msg.event_id, final_bid, indx));
+                LOG("sending bid for event %d with value %.2f at index %d\n", msg.event_id, final_bid,
+                    indx);
                 wb_emitter_set_channel(emitter_tag, robot_id + 1);
                 wb_emitter_send(emitter_tag, &my_bid, sizeof(BidT));
             }
@@ -431,10 +429,9 @@ int compute_path_to_target() {
         Point2d start = {my_pos[0], my_pos[1]};
         Point2d goal = {target[0][0], target[0][1]};
 
-        DBG(
-            ("[Robot %d] called compute_path_to_target(): start is my pos (%.2f, %.2f), goal is first task "
-             "in list (%.2f, %.2f)\n",
-             robot_id, my_pos[0], my_pos[1], target[0][0], target[0][1]));
+        LOG("Called compute_path_to_target(): start is my pos (%.2f, %.2f), goal is first task "
+            "in list (%.2f, %.2f)\n",
+            my_pos[0], my_pos[1], target[0][0], target[0][1]);
 
         // Call pathfinding to get the waypoint path
         // get_path returns the path distance (sum of segment lengths), or -1 if no path
@@ -451,10 +448,10 @@ int compute_path_to_target() {
         if (path_distance > 0 && count > 0) {
             waypoint_count = count;
             current_waypoint_idx = 0;
-            DBG(("  > new path with %d waypoints, distance %.3f\n", waypoint_count, path_distance));
+            LOG("  > New path with %d waypoints, distance %.3f\n", waypoint_count, path_distance);
             return 1;
         } else {
-            DBG(("  > failed to compute path to target (%.3f, %.3f)\n", goal.x, goal.y));
+            LOG("  > Failed to compute path to target (%.3f, %.3f)\n", goal.x, goal.y);
             waypoint_count = 0;
             return 0;
         }
@@ -570,8 +567,7 @@ void run(int ms) {
     // Check if battery has been depleted to switch to DEAD state
     if (battery_time_used >= MAX_BATTERY_LIFETIME) {
         state = DEAD;
-        DBG(("[Robot %d] (t=%dms) BATTERY DEPLETED! (used %dms / %dms max)\n", robot_id, sim_clock,
-             battery_time_used, MAX_BATTERY_LIFETIME));
+        LOG("BATTERY DEPLETED! (used %dms / %dms max)\n", battery_time_used, MAX_BATTERY_LIFETIME);
 
         // Motors off, stay immobile
         wb_motor_set_velocity(left_motor, 0);
@@ -615,24 +611,23 @@ void run(int ms) {
 
                     compute_path_to_target();
                     travel_start_time = sim_clock;  // Mark when travel started
-                    DBG(("[Robot %d] (t=%dms) started travelling to first of %d tasks (%d waypoints)\n",
-                         robot_id, sim_clock, target_list_length, waypoint_count));
+                    LOG("Started travelling to first of %d tasks (%d waypoints)\n", target_list_length,
+                        waypoint_count);
                 }
 
                 // If we have waypoints, navigate through them
                 if (waypoint_count > 0) {
                     Point2d current_waypoint = waypoint_path[current_waypoint_idx];
-                    // DBG(("[Robot %d] (t=%dms) current waypoint: %d/%d (%.2f, %.2f)\n", robot_id,
-                    // sim_clock, current_waypoint_idx + 1, waypoint_count, current_waypoint.x,
-                    // current_waypoint.y));
+                    // LOG("Current waypoint: %d/%d (%.2f, %.2f)\n", current_waypoint_idx + 1,
+                    // waypoint_count,
+                    //     current_waypoint.x, current_waypoint.y);
 
                     // Check if we've reached the current waypoint
                     double dist_to_waypoint =
                         dist(my_pos[0], my_pos[1], current_waypoint.x, current_waypoint.y);
                     if (dist_to_waypoint < WAYPOINT_ARRIVAL_THRESHOLD) {
-                        DBG(("[Robot %d] (t=%dms) waypoint %d/%d (%.2f, %.2f) reached", robot_id, sim_clock,
-                             current_waypoint_idx + 1, waypoint_count, current_waypoint.x,
-                             current_waypoint.y));
+                        LOG("Waypoint %d/%d (%.2f, %.2f) reached\n", current_waypoint_idx + 1,
+                            waypoint_count, current_waypoint.x, current_waypoint.y);
                         current_waypoint_idx++;
                         if (current_waypoint_idx >= waypoint_count) {
                             // Reached final destination - track battery consumed during travel
@@ -640,12 +635,11 @@ void run(int ms) {
                             msr = 0;
                             int travel_time_ms = sim_clock - travel_start_time;
                             battery_time_used += travel_time_ms;
-                            DBG(
-                                ("; arrived at task - traveled for %dms; total battery used: %dms / %dms "
-                                 "(%.2f %%)\n",
-                                 travel_time_ms, battery_time_used, MAX_BATTERY_LIFETIME,
-                                 (battery_time_used * 100.0) / MAX_BATTERY_LIFETIME));
-                            DBG(("    > resetting waypoints and travel time for next task\n"));
+                            LOG("  > Arrived at task - traveled for %dms; total battery used: %dms / %dms "
+                                "(%.2f %%)\n",
+                                travel_time_ms, battery_time_used, MAX_BATTERY_LIFETIME,
+                                (battery_time_used * 100.0) / MAX_BATTERY_LIFETIME);
+                            LOG("    > Resetting waypoints and travel time for next task\n");
                             waypoint_count = 0;  // Reset path for next target
                             current_waypoint_idx = 0;
                             travel_start_time = 0;
@@ -653,9 +647,9 @@ void run(int ms) {
                             // Move to next waypoint
                             compute_go_to_point(&msl, &msr, waypoint_path[current_waypoint_idx].x,
                                                 waypoint_path[current_waypoint_idx].y);
-                            DBG(("; moving to waypoint %d/%d (%.2f, %.2f)\n", current_waypoint_idx + 1,
-                                 waypoint_count, waypoint_path[current_waypoint_idx].x,
-                                 waypoint_path[current_waypoint_idx].y));
+                            LOG("  > Moving to waypoint %d/%d (%.2f, %.2f)\n", current_waypoint_idx + 1,
+                                waypoint_count, waypoint_path[current_waypoint_idx].x,
+                                waypoint_path[current_waypoint_idx].y);
                         }
                     } else {
                         // Move towards current waypoint
@@ -681,7 +675,7 @@ void run(int ms) {
                 break;
 
             default:
-                printf("Invalid state: robot_id %d \n", robot_id);
+                LOG("Invalid state: robot_id %d \n", robot_id);
         }
     }
     // Set the speed
