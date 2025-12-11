@@ -67,8 +67,11 @@ USE_C_API = true
 
 # --- Project-specific build configuration ---
 
-# Compile both controller and pathfinding as C++
-CXX_SOURCES = epuck_crown.cpp ../common/pathfinding.cpp
+# C++ source files for the supervisor controller
+CXX_SOURCES = supervisor_cent.cpp ../common/pathfinding.cpp
+
+# Compilation flags (C++ standard, warnings, optimization)
+CFLAGS = -std=c++17 -Wall -Wextra -O2
 
 # Include paths for finding headers
 INCLUDE = -I"$(WEBOTS_HOME_PATH)/include" -I. -I../common

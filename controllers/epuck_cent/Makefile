@@ -67,8 +67,8 @@ USE_C_API = true
 
 # --- Project-specific build configuration ---
 
-# C++ source files for the supervisor controller
-CXX_SOURCES = auct_super.cc ../common/pathfinding.cpp
+# Compile both controller and pathfinding as C++
+CXX_SOURCES = epuck_cent.cpp ../common/pathfinding.cpp
 
 # Compilation flags (C++ standard, warnings, optimization)
 CFLAGS = -std=c++17 -Wall -Wextra -O2

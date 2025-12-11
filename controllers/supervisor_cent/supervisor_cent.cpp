@@ -16,16 +16,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <iomanip>
-#include <memory>
 #include <sstream>
-#include <vector>
 
 using namespace std;
-
-// Define M_PI if not already defined (needed for some compilers)
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
 
 #include <webots/emitter.h>
 #include <webots/receiver.h>
@@ -37,7 +30,6 @@ using namespace std;
 #include "../common/geometry.hpp"
 #include "../common/logging.hpp"
 #include "../common/map_config.hpp"
-#include "../common/pathfinding.hpp"
 #include "../common/utils.hpp"
 
 uint64_t g_simTime = 0;
