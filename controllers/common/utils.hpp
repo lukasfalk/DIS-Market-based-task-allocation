@@ -5,6 +5,8 @@
 #include <cmath>
 #include <cstdlib>
 
+#include "geometry.hpp"
+
 namespace utils {
 
 // Generate random number in [0,1]
@@ -22,6 +24,8 @@ inline double dist(double x0, double y0, double x1, double y1) {
     return std::sqrt((x0 - x1) * (x0 - x1) + (y0 - y1) * (y0 - y1));
 }
 
-}  // namespace utils
+// Overload for Point2d
+inline double dist(Point2d p0, Point2d p1) { return dist(p0.x, p0.y, p1.x, p1.y); }
 
+}  // namespace utils
 #endif  // UTILS_HPP

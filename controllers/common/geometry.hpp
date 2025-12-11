@@ -17,21 +17,21 @@ struct Point2d {
     }
 
     // Euclidean distance
-    double distance(const Point2d& p) const {
+    double distanceTo(const Point2d& p) const {
         return std::sqrt(std::pow(x - p.x, 2) + std::pow(y - p.y, 2));
     }
 
     // Distance from this point to a line segment defined by a and b
     double distanceToSegment(const Point2d& a, const Point2d& b) const {
         double l2 = std::pow(a.x - b.x, 2) + std::pow(a.y - b.y, 2);
-        if (l2 == 0.0) return distance(a);
+        if (l2 == 0.0) return distanceTo(a);
 
         double t = ((x - a.x) * (b.x - a.x) + (y - a.y) * (b.y - a.y)) / l2;
-        if (t < 0.0) return distance(a);
-        if (t > 1.0) return distance(b);
+        if (t < 0.0) return distanceTo(a);
+        if (t > 1.0) return distanceTo(b);
 
         Point2d projection(a.x + t * (b.x - a.x), a.y + t * (b.y - a.y));
-        return distance(projection);
+        return distanceTo(projection);
     }
 };
 

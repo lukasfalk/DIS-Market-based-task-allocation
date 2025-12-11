@@ -28,29 +28,29 @@ enum MessageType : int {
 
 // Message sent from Supervisor -> Robot
 struct MessageT {
-    uint16_t robot_id;  // Target ID
-    double robot_x;
-    double robot_y;
+    uint16_t robotId;  // Target ID
+    double robotX;
+    double robotY;
     double heading;
 
-    MessageType msg_type;
+    MessageType msgType;
 
     // Event details (valid if type is related to an event)
-    uint16_t event_id;
-    TaskType task_type;
-    double event_x;
-    double event_y;
+    uint16_t eventId;
+    TaskType taskType;
+    double eventX;
+    double eventY;
 
     // Index suggestion for task list
-    int event_index;
+    int eventIndex;
 };
 
 // Message sent from Robot -> Supervisor
 struct BidT {
-    uint16_t robot_id;
-    uint16_t event_id;
-    double bid_value;  // Estimated cost/time
-    int event_index;   // Where the robot plans to insert the task
+    uint16_t robotId;
+    uint16_t eventId;
+    double bidValue;  // Estimated cost/time
+    int eventIndex;   // Where the robot plans to insert the task
 };
 
 #endif  // COMMUNICATION_HPP

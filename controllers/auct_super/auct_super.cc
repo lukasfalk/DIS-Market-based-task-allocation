@@ -40,13 +40,14 @@ using namespace std;
 #include "../common/pathfinding.hpp"
 #include "../common/utils.hpp"
 
-uint64_t g_sim_time = 0;
+uint64_t g_simTime = 0;
 
-#define LOG(fmt, ...)                                                                                 \
-    do {                                                                                              \
-        char prefix[64];                                                                              \
-        snprintf(prefix, sizeof(prefix), "[Supervisor @ t=%llums] ", (unsigned long long)g_sim_time); \
-        log_msg(prefix, fmt, ##__VA_ARGS__);                                                          \
+// Logging macro, configured with prefix "[Supervisor @ t={TIME}ms] "
+#define LOG(fmt, ...)                                                                                \
+    do {                                                                                             \
+        char prefix[64];                                                                             \
+        snprintf(prefix, sizeof(prefix), "[Supervisor @ t=%llums] ", (unsigned long long)g_simTime); \
+        logMsg(prefix, fmt, ##__VA_ARGS__);                                                          \
     } while (0)
 
 #define AUCTION_TIMEOUT 1000  // number of steps after which an auction stops
@@ -64,11 +65,11 @@ uint64_t g_sim_time = 0;
 
 #define MAX_WALLS 2
 
-WbNodeRef g_event_nodes[MAX_EVENTS];
-vector<WbNodeRef> g_event_nodes_free;
+WbNodeRef g_eventNodes[MAX_EVENTS];
+vector<WbNodeRef> g_eventNodesFree;
 
 // Test function to verify interior wall detection
-void test_interior_wall_detection() {
+void testInteriorWallDetection() {
     printf("\n=== Testing Interior Wall Detection ===\n");
 
     // Test points that should be INSIDE walls
@@ -104,7 +105,7 @@ double gauss(void) {
     return (x1 * w);
 }
 
-Point2d rand_coord() {
+Point2d randCoord() {
     // Sample uniformly within the arena bounds defined by the pathfinding graph
     // Arena bounds: x in [-0.575, 0.575], y in [-0.575, 0.575]
     // Excludes points inside interior walls
@@ -132,45 +133,44 @@ double expovariate(double mu) {
 class Event {
     // Public variables
    public:
-    uint16_t id_;           // event id
-    Point2d pos_;           // event pos
-    WbNodeRef node_;        // event node ref
-    TaskType type_;         // type of event (TASK_TYPE_A or TASK_TYPE_B)
-    uint16_t assigned_to_;  // id of the robot that will handle this event
+    uint16_t id_;          // event id
+    Point2d pos_;          // event pos
+    WbNodeRef node_;       // event node ref
+    TaskType type_;        // type of event (TASK_TYPE_A or TASK_TYPE_B)
+    uint16_t assignedTo_;  // id of the robot that will handle this event
 
     // Auction data
-    uint64_t t_announced_;  // time at which event was announced to robots
-    bitset<NUM_ROBOTS> bids_in_;
-    uint16_t best_bidder_;  // id of the robot that had the best bid so far
-    double best_bid_;       // value of the best bid (lower is better)
-    uint64_t t_done_;       // time at which the assigned robot reached the event
-    int bidder_index;       // index at which the bidder will put event in tasklist
+    uint64_t timeAnnounced_;  // time at which event was announced to robots
+    bitset<NUM_ROBOTS> bidsIn_;
+    uint16_t bestBidder_;  // id of the robot that had the best bid so far
+    double bestBid_;       // value of the best bid (lower is better)
+    uint64_t timeDone_;    // time at which the assigned robot reached the event
+    int bidderIndex;       // index at which the bidder will put event in tasklist
 
     // Public functions
    public:
     // Event creation
     Event(uint16_t id)
         : id_(id),
-          pos_(rand_coord()),
-          type_(utils::random_01() < (1.0f / 3.0f)
-                    ? TASK_TYPE_A
-                    : TASK_TYPE_B),  // 1/3 of the time task type A, 2/3 of the time type B
-          assigned_to_(-1),
-          t_announced_(-1),
-          best_bidder_(-1),
-          best_bid_(0.0),
-          t_done_(-1) {
-        node_ = g_event_nodes_free.back();  // Place node
-        g_event_nodes_free.pop_back();      // remove the "free" node from the free list
+          pos_(randCoord()),
+          type_(utils::random_01() < (1.0f / 3.0f) ? TASK_TYPE_A : TASK_TYPE_B),  // 1/3 of the time task
+                                                                                  // type A, 2/3 of the time
+                                                                                  // type B
+          assignedTo_(-1),
+          timeAnnounced_(-1),
+          bestBidder_(-1),
+          bestBid_(0.0),
+          timeDone_(-1) {
+        node_ = g_eventNodesFree.back();  // Place node
+        g_eventNodesFree.pop_back();      // remove the "free" node from the free list
 
-        double event_node_pos[3];  // Place event in arena
-        event_node_pos[0] = pos_.x;
-        event_node_pos[1] = pos_.y;
-        event_node_pos[2] = .01;
-        wb_supervisor_field_set_sf_vec3f(wb_supervisor_node_get_field(node_, "translation"),
-                                         event_node_pos);
+        double eventNodePos[3];  // Place event in arena
+        eventNodePos[0] = pos_.x;
+        eventNodePos[1] = pos_.y;
+        eventNodePos[2] = .01;
+        wb_supervisor_field_set_sf_vec3f(wb_supervisor_node_get_field(node_, "translation"), eventNodePos);
 
-        bool color_set = false;  // Give the new event a color depending on its type
+        bool colorSet = false;  // Give the new event a color depending on its type
         double red[3] = {1.0, 0.0, 0.0};
         double blue[3] = {0.0, 0.0, 1.0};
         WbFieldRef f_children = wb_supervisor_node_get_field(node_, "children");
@@ -192,7 +192,7 @@ class Event {
                                         wb_supervisor_field_set_sf_color(f_color, red);
                                     else  // If event's task type is B, color blue
                                         wb_supervisor_field_set_sf_color(f_color, blue);
-                                    color_set = true;
+                                    colorSet = true;
                                 }
                             }
                         }
@@ -200,48 +200,47 @@ class Event {
                 }
             }
         }
-        if (!color_set) {
+        if (!colorSet) {
             // Fallback: try a direct 'color' field (if some PROTO used it) or just warn
-            WbFieldRef f_color_direct = wb_supervisor_node_get_field(node_, "color");
-            if (f_color_direct)
-                wb_supervisor_field_set_sf_color(f_color_direct, red);
+            WbFieldRef f_colorDirect = wb_supervisor_node_get_field(node_, "color");
+            if (f_colorDirect)
+                wb_supervisor_field_set_sf_color(f_colorDirect, red);
             else
                 LOG("Warning: couldn't set event node color (no material/color field)\n");
         }
     }
 
-    bool is_assigned() const { return assigned_to_ != (uint16_t)-1; }
-    bool was_announced() const { return t_announced_ != (uint64_t)-1; }
-    bool has_bids() const { return best_bidder_ != (uint16_t)-1; }
-    bool is_done() const { return t_done_ != (uint64_t)-1; }
+    bool isAssigned() const { return assignedTo_ != (uint16_t)-1; }
+    bool wasAnnounced() const { return timeAnnounced_ != (uint64_t)-1; }
+    bool hasBids() const { return bestBidder_ != (uint16_t)-1; }
+    bool isDone() const { return timeDone_ != (uint64_t)-1; }
 
     // Check if event can be assigned
     void updateAuction(uint16_t bidder, double bid, int index) {
-        if (bid >= 0.0 && (!has_bids() || bid < best_bid_)) {
-            best_bidder_ = bidder;
-            best_bid_ = bid;
-            bidder_index = index;
+        if (bid >= 0.0 && (!hasBids() || bid < bestBid_)) {
+            bestBidder_ = bidder;
+            bestBid_ = bid;
+            bidderIndex = index;
         }
-        bids_in_.set(bidder);
-        if (bids_in_.all()) assigned_to_ = best_bidder_;
+        bidsIn_.set(bidder);
+        if (bidsIn_.all()) assignedTo_ = bestBidder_;
     }
 
     void restartAuction() {
-        assigned_to_ = -1;
-        t_announced_ = -1;
-        bids_in_.reset();
-        best_bidder_ = -1;
-        best_bid_ = 0.0;
-        t_done_ = -1;
+        assignedTo_ = -1;
+        timeAnnounced_ = -1;
+        bidsIn_.reset();
+        bestBidder_ = -1;
+        bestBid_ = 0.0;
+        timeDone_ = -1;
     }
 
     // Mark event as done by moving it out of the arena
     void markDone(uint64_t clk) {
-        t_done_ = clk;
-        double event_node_pos[3] = {-5, -5, 0.1};
-        wb_supervisor_field_set_sf_vec3f(wb_supervisor_node_get_field(node_, "translation"),
-                                         event_node_pos);
-        g_event_nodes_free.push_back(node_);
+        timeDone_ = clk;
+        double eventNodePos[3] = {-5, -5, 0.1};
+        wb_supervisor_field_set_sf_vec3f(wb_supervisor_node_get_field(node_, "translation"), eventNodePos);
+        g_eventNodesFree.push_back(node_);
     }
 };
 
@@ -251,30 +250,30 @@ class Supervisor {
    private:
     uint64_t clock_;
 
-    uint16_t next_event_id_;
+    uint16_t nextEventId_;
     vector<unique_ptr<Event>> events_;
-    uint16_t num_active_events_;
-    uint64_t t_next_event_;
+    uint16_t numActiveEvents_;
+    uint64_t timeOfNextEvent;
     Point2d pos_;    // supervisor pos
     Event* auction;  // the event currently being auctioned
-    uint64_t t_next_gps_tick_;
+    uint64_t timeOfNextGPSTick;
 
-    uint16_t num_events_handled_;  // total number of events handled
-    double stat_total_distance_;   // total distance traveled
-    double stat_robot_prev_pos_[NUM_ROBOTS][2];
-    uint32_t robot_battery_used[NUM_ROBOTS];  // time spent moving //I think int and unsigned int are too
-                                              // small, a larger non-floating datatype can be used (but i
-                                              // cant remember them and i have no internet LMAO)
+    uint16_t numEventsHandled;  // total number of events handled
+    double statTotalDistance;   // total distance traveled
+    Point2d statRobotPrevPos[NUM_ROBOTS];
+    uint32_t robotBatteryUsed[NUM_ROBOTS];  // time spent moving //I think int and unsigned int are too
+                                            // small, a larger non-floating datatype can be used (but i
+                                            // cant remember them and i have no internet LMAO)
 
     WbNodeRef robots_[NUM_ROBOTS];
     WbDeviceTag emitter_;
     WbDeviceTag receivers_[NUM_ROBOTS];
 
     // track proximity times and current proximity state between robots
-    double proximity_time_[NUM_ROBOTS][NUM_ROBOTS];
-    bool proximity_state_[NUM_ROBOTS][NUM_ROBOTS];
+    double proximityTime_[NUM_ROBOTS][NUM_ROBOTS];
+    bool proximityState_[NUM_ROBOTS][NUM_ROBOTS];
 
-    typedef vector<pair<Event*, MessageType>> event_queue_t;
+    typedef vector<pair<Event*, MessageType>> EventQueueT;
 
    private:
     // wall struct
@@ -284,41 +283,41 @@ class Supervisor {
         double thickness;  // full thickness (m)
     };
     Wall walls_[MAX_WALLS];
-    int num_walls_ = 0;
+    int numWalls_ = 0;
 
     // track time spent near walls per robot
-    double proximity_wall_time_[NUM_ROBOTS];  // seconds
-    double proximity_any_time_ =
-        0.0;  // any time in simulation where there is a proximity either near wall or another robot
+    double proximityWallTime_[NUM_ROBOTS];  // seconds
+    double proximityAnyTime_ = 0.0;  // Any time in sim where there is a proximity either near wall or
+                                     // another robot
 
     // robot geometry
-    const double robot_radius_ = 0.05;
+    const double robotRadius_ = 0.05;
     // Private functions
    private:
     void addEvent() {
-        events_.push_back(unique_ptr<Event>(new Event{next_event_id_++}));  // add to list
-        assert(num_active_events_ < NUM_ACTIVE_EVENTS);  // check max. active events not reached
-        num_active_events_++;
-        t_next_event_ = clock_ + expovariate(EVENT_GENERATION_DELAY);
+        events_.push_back(unique_ptr<Event>(new Event{nextEventId_++}));  // add to list
+        assert(numActiveEvents_ < NUM_ACTIVE_EVENTS);  // check max. active events not reached
+        numActiveEvents_++;
+        timeOfNextEvent = clock_ + expovariate(EVENT_GENERATION_DELAY);
     }
 
     // Init robot and get robot_ids and receivers
     void linkRobot(uint16_t id) {
         const char kRobotNameFormat[] = "e-puck%d";
         const char kReceiverNameFormat[] = "rec%d";
-        char node_name[16];
+        char nodeName[16];
 
         // Get the robot node's handle
-        sprintf(node_name, kRobotNameFormat, id);
-        robots_[id] = wb_supervisor_node_get_from_def(node_name);
+        sprintf(nodeName, kRobotNameFormat, id);
+        robots_[id] = wb_supervisor_node_get_from_def(nodeName);
         if (!robots_[id]) {
             LOG("Missing node for robot #%d\n", id);
             exit(1);
         }
 
         // Get the respective receiver
-        sprintf(node_name, kReceiverNameFormat, id);
-        receivers_[id] = wb_robot_get_device(node_name);
+        sprintf(nodeName, kReceiverNameFormat, id);
+        receivers_[id] = wb_robot_get_device(nodeName);
         if (!receivers_[id]) {
             LOG("Missing receiver for robot #%d\n", id);
             exit(1);
@@ -328,138 +327,137 @@ class Supervisor {
     }
 
     // Assemble a new message to be sent to robots (added type of event)
-    void buildMessage(uint16_t robot_id, const Event* event, MessageType msg_type, MessageT* msg) {
-        WbFieldRef f_rot = wb_supervisor_node_get_field(robots_[robot_id], "rotation");
-        const double* pos = getRobotPos(robot_id);
+    void buildMessage(uint16_t robotId, const Event* event, MessageType msgType, MessageT* msg) {
+        WbFieldRef f_rot = wb_supervisor_node_get_field(robots_[robotId], "rotation");
+        Point2d pos = getRobotPos(robotId);
         const double* rot = wb_supervisor_field_get_sf_rotation(f_rot);
 
-        msg->robot_id = robot_id;
-        msg->robot_x = pos[0];              // no gps noise used here
-        msg->robot_y = pos[1];              // no gps noise used here
+        msg->robotId = robotId;
+        msg->robotX = pos.x;                // no gps noise used here
+        msg->robotY = pos.y;                // no gps noise used here
         double heading = -rot[2] * rot[3];  // no gps noise used here
         msg->heading = heading > 2 * M_PI ? heading - 2 * M_PI : heading;
-        msg->msg_type = msg_type;
-        msg->event_id = -1;
-        msg->event_x = 0.0;
-        msg->event_y = 0.0;
-        msg->task_type = TASK_TYPE_INVALID;
+        msg->msgType = msgType;
+        msg->eventId = -1;
+        msg->eventX = 0.0;
+        msg->eventY = 0.0;
+        msg->taskType = TASK_TYPE_INVALID;
 
         if (event) {
-            assert(msg_type != MSG_EVENT_INVALID && msg_type != MSG_GPS_ONLY);
-            msg->event_id = event->id_;
-            msg->event_x = event->pos_.x;
-            msg->event_y = event->pos_.y;
-            msg->event_index = event->bidder_index;
-            msg->task_type = event->type_;
+            assert(msgType != MSG_EVENT_INVALID && msgType != MSG_GPS_ONLY);
+            msg->eventId = event->id_;
+            msg->eventX = event->pos_.x;
+            msg->eventY = event->pos_.y;
+            msg->eventIndex = event->bidderIndex;
+            msg->taskType = event->type_;
         }
     }
 
-    const double* getRobotPos(uint16_t robot_id) {
-        WbFieldRef f_pos = wb_supervisor_node_get_field(robots_[robot_id], "translation");
-        return wb_supervisor_field_get_sf_vec3f(f_pos);
+    Point2d getRobotPos(uint16_t robotId) {
+        WbFieldRef f_pos = wb_supervisor_node_get_field(robots_[robotId], "translation");
+        const double* pos = wb_supervisor_field_get_sf_vec3f(f_pos);
+        return Point2d(pos[0], pos[1]);
     }
 
-    void setRobotPos(uint16_t robot_id, double x, double y) {
-        WbFieldRef f_pos = wb_supervisor_node_get_field(robots_[robot_id], "translation");
+    void setRobotPos(uint16_t robotId, const Point2d& pos) { setRobotPos(robotId, pos.x, pos.y); }
+
+    void setRobotPos(uint16_t robotId, double x, double y) {
+        WbFieldRef f_pos = wb_supervisor_node_get_field(robots_[robotId], "translation");
         double pos[3] = {x, y, 0.01};
         return wb_supervisor_field_set_sf_vec3f(f_pos, pos);
     }
 
     // Marks one event as done, if one of the robots is within the range
-    void markEventsDone(event_queue_t& event_queue) {
+    void markEventsDone(EventQueueT& eventQueue) {
         for (auto& event : events_) {
-            if (!event->is_assigned() || event->is_done()) continue;
+            if (!event->isAssigned() || event->isDone()) continue;
 
-            const double* robot_pos = getRobotPos(event->assigned_to_);
-            Point2d robot_pos_pt(robot_pos[0], robot_pos[1]);
-            double dist = event->pos_.distance(robot_pos_pt);
+            Point2d currentRobotPos = getRobotPos(event->assignedTo_);
+            double dist = event->pos_.distanceTo(currentRobotPos);
 
             if (dist <= EVENT_RANGE) {
-                LOG("Robot %d reached event %d\n", event->assigned_to_, event->id_);
+                LOG("Robot %d reached event %d\n", event->assignedTo_, event->id_);
 
                 // Calculate battery usage for time spent at the task completing it
-                int time_at_task = 0;
-                if (event->assigned_to_ <= 1) {  // A-specialist (robots 0, 1)
-                    time_at_task = (event->type_ == TASK_TYPE_A) ? 3000 : 5000;
+                int timeAtTask = 0;
+                if (event->assignedTo_ <= 1) {  // A-specialist (robots 0, 1)
+                    timeAtTask = (event->type_ == TASK_TYPE_A) ? 3000 : 5000;
                 } else {  // B-specialist (robots 2, 3, 4)
-                    time_at_task = (event->type_ == TASK_TYPE_A) ? 9000 : 1000;
+                    timeAtTask = (event->type_ == TASK_TYPE_A) ? 9000 : 1000;
                 }
-                robot_battery_used[event->assigned_to_] += time_at_task;
+                robotBatteryUsed[event->assignedTo_] += timeAtTask;
 
-                num_events_handled_++;
+                numEventsHandled++;
                 event->markDone(clock_);
-                num_active_events_--;
-                event_queue.emplace_back(event.get(), MSG_EVENT_DONE);
+                numActiveEvents_--;
+                eventQueue.emplace_back(event.get(), MSG_EVENT_DONE);
             }
         }
     }
 
-    void collisionDetection(uint64_t step_size) {
+    void collisionDetection(uint64_t stepSize) {
         // accumulate time (in seconds) robots spend within PROXIMITY_THRESHOLD
-        double dt_s = (double)step_size / 1000.0;
-        bool any_proximity_this_step = false;
+        double dtInSeconds = (double)stepSize / 1000.0;
+        bool anyProximityThisStep = false;
 
         // check all robot pairs for proximity
         for (int i = 0; i < NUM_ROBOTS; ++i) {
-            const double* pos_i = getRobotPos(i);
-            Point2d robot_i_pos(pos_i[0], pos_i[1]);
+            Point2d robotIPos = getRobotPos(i);
             for (int j = i + 1; j < NUM_ROBOTS; ++j) {
-                const double* pos_j = getRobotPos(j);
-                Point2d robot_j_pos(pos_j[0], pos_j[1]);
-                double distance = robot_i_pos.distance(robot_j_pos);
+                Point2d robotJPos = getRobotPos(j);
+                double distance = robotIPos.distanceTo(robotJPos);
                 bool within = distance < PROXIMITY_THRESHOLD;
                 if (within) {
-                    proximity_time_[i][j] += dt_s;
-                    proximity_time_[j][i] += dt_s;
-                    any_proximity_this_step = true;
+                    proximityTime_[i][j] += dtInSeconds;
+                    proximityTime_[j][i] += dtInSeconds;
+                    anyProximityThisStep = true;
                 }
-                proximity_state_[i][j] = within;
-                proximity_state_[j][i] = within;
+                proximityState_[i][j] = within;
+                proximityState_[j][i] = within;
             }
         }
 
         // Check proximity to walls (no avoidance)
         for (int i = 0; i < NUM_ROBOTS; ++i) {
-            const double* pos_i = getRobotPos(i);
-            Point2d robot_i_pos(pos_i[0], pos_i[1]);
-            for (int w = 0; w < num_walls_; ++w) {
-                double dist = pos_.distanceToSegment(walls_[w].a, walls_[w].b);
-                double threshold =
-                    (walls_[w].thickness / 2.0) + robot_radius_ + 0.0;  // optional safety margin
+            Point2d robotIPos = getRobotPos(i);
+            for (int w = 0; w < numWalls_; ++w) {
+                double dist = robotIPos.distanceToSegment(walls_[w].a, walls_[w].b);
+                double threshold = (walls_[w].thickness / 2.0) + robotRadius_ + 0.0;  // optional safety
+                                                                                      // margin
                 if (dist < threshold) {
-                    proximity_wall_time_[i] += dt_s;
-                    any_proximity_this_step = true;
+                    proximityWallTime_[i] += dtInSeconds;
+                    anyProximityThisStep = true;
                 }
             }
         }
 
-        if (any_proximity_this_step) {
-            proximity_any_time_ += dt_s;  // increment the final parameter
+        if (anyProximityThisStep) {
+            proximityAnyTime_ += dtInSeconds;  // increment the final parameter
         }
     }
-    void handleAuctionEvents(event_queue_t& event_queue) {
+    void handleAuctionEvents(EventQueueT& eventQueue) {
         // For each unassigned event
         for (auto& event : events_) {
-            if (event->is_assigned()) continue;
+            if (event->isAssigned()) continue;
 
             // Send announce, if new
             // IMPL DETAIL: Only allow one auction at a time.
-            if (!event->was_announced() && !auction) {
-                event->t_announced_ = clock_;
-                event_queue.emplace_back(event.get(), MSG_EVENT_NEW);
+            if (!event->wasAnnounced() && !auction) {
+                event->timeAnnounced_ = clock_;
+                eventQueue.emplace_back(event.get(), MSG_EVENT_NEW);
                 auction = event.get();
                 LOG("Event %d announced\n", event->id_);
 
                 // End early or restart, if timed out
-            } else if (clock_ - event->t_announced_ > EVENT_TIMEOUT) {
+            } else if (clock_ - event->timeAnnounced_ > EVENT_TIMEOUT) {
                 // End early if we have any bids at all
-                if (event->has_bids()) {
+                if (event->hasBids()) {
                     // IMPLEMENTATION DETAIL: If about to time out, assign to
                     // the highest bidder or restart the auction if there is none.
-                    event->assigned_to_ = event->best_bidder_;
-                    event_queue.emplace_back(event.get(), MSG_EVENT_WON);  // FIXME?
+                    event->assignedTo_ = event->bestBidder_;
+                    eventQueue.emplace_back(event.get(), MSG_EVENT_WON);  // FIXME?
                     auction = NULL;
-                    LOG("Robot %d won event %d\n", event->assigned_to_, event->id_);
+                    LOG("Robot %d won event %d\n", event->assignedTo_, event->id_);
 
                     // Restart (incl. announce) if no bids
                 } else {
@@ -472,17 +470,15 @@ class Supervisor {
     }
 
     // Calculate total distance travelled by robots
-    void statTotalDistance(uint64_t step_size) {
+    void calcStatTotalDistance(uint64_t stepSize) {
         for (int i = 0; i < NUM_ROBOTS; ++i) {
-            const double* robot_pos = getRobotPos(i);
-            double delta[2] = {robot_pos[0] - stat_robot_prev_pos_[i][0],
-                               robot_pos[1] - stat_robot_prev_pos_[i][1]};
-            if ((delta[0] + delta[1]) > 0.0) {
-                robot_battery_used[i] += step_size;
+            Point2d robotPos = getRobotPos(i);
+            auto dist = robotPos.distanceTo(statRobotPrevPos[i]);
+            if (dist > 1e-6) {
+                robotBatteryUsed[i] += stepSize;
+                statTotalDistance += dist;
             }
-            stat_total_distance_ += sqrt(delta[0] * delta[0] + delta[1] * delta[1]);
-            stat_robot_prev_pos_[i][0] = robot_pos[0];
-            stat_robot_prev_pos_[i][1] = robot_pos[1];
+            statRobotPrevPos[i] = robotPos;
         }
     }
 
@@ -493,26 +489,26 @@ class Supervisor {
     // Reset robots & events
     void reset() {
         clock_ = 0;
-        g_sim_time = 0;
+        g_simTime = 0;
 
         // initialize & link events
-        next_event_id_ = 0;
+        nextEventId_ = 0;
         events_.clear();
-        num_active_events_ = 0;
-        t_next_event_ = 0;  // invalid state
+        numActiveEvents_ = 0;
+        timeOfNextEvent = 0;  // invalid state
         auction = NULL;
-        t_next_gps_tick_ = 0;
+        timeOfNextGPSTick = 0;
 
-        num_events_handled_ = 0;
-        stat_total_distance_ = 0.0;
+        numEventsHandled = 0;
+        statTotalDistance = 0.0;
 
         // for wall proximity code
-        num_walls_ = 0;
-        walls_[num_walls_++] = Wall{Point2d(-0.6375, 0.0), Point2d(-0.2625, 0.0), 0.01};  // Lefthand wall
-        walls_[num_walls_++] = Wall{Point2d(0.125, 0.65), Point2d(0.125, -0.2), 0.01};    // Top wall
+        numWalls_ = 0;
+        walls_[numWalls_++] = Wall{Point2d(-0.6375, 0.0), Point2d(-0.2625, 0.0), 0.01};  // Lefthand wall
+        walls_[numWalls_++] = Wall{Point2d(0.125, 0.65), Point2d(0.125, -0.2), 0.01};    // Top wall
 
         // init wall proximity times
-        for (int i = 0; i < NUM_ROBOTS; ++i) proximity_wall_time_[i] = 0.0;
+        for (int i = 0; i < NUM_ROBOTS; ++i) proximityWallTime_[i] = 0.0;
 
         // add the first few events
         for (int i = 0; i < NUM_ACTIVE_EVENTS; ++i) {
@@ -523,11 +519,10 @@ class Supervisor {
         for (int i = 0; i < NUM_ROBOTS; i++) {
             linkRobot(i);
 
-            Point2d pos = rand_coord();
-            setRobotPos(i, pos.x, pos.y);
-            stat_robot_prev_pos_[i][0] = pos.x;
-            stat_robot_prev_pos_[i][1] = pos.y;
-            robot_battery_used[i] = 0;
+            Point2d pos = randCoord();
+            setRobotPos(i, pos);
+            statRobotPrevPos[i] = pos;
+            robotBatteryUsed[i] = 0;
         }
 
         // initialize the emitter
@@ -539,22 +534,22 @@ class Supervisor {
     }
 
     // Do a step
-    bool step(uint64_t step_size) {
-        clock_ += step_size;
-        g_sim_time = clock_;
+    bool step(uint64_t stepSize) {
+        clock_ += stepSize;
+        g_simTime = clock_;
 
         // Events that will be announced next or that have just been assigned/done
-        event_queue_t event_queue;
+        EventQueueT eventQueue;
 
-        markEventsDone(event_queue);
+        markEventsDone(eventQueue);
 
         // ** Add a random new event, if the time has come
-        assert(t_next_event_ > 0);
-        if (clock_ >= t_next_event_ && num_active_events_ < NUM_ACTIVE_EVENTS) {
+        assert(timeOfNextEvent > 0);
+        if (clock_ >= timeOfNextEvent && numActiveEvents_ < NUM_ACTIVE_EVENTS) {
             addEvent();
         }
 
-        handleAuctionEvents(event_queue);
+        handleAuctionEvents(eventQueue);
 
         // Send and receive messages
         BidT* pbid;  // inbound
@@ -565,15 +560,15 @@ class Supervisor {
                 assert(wb_receiver_get_data_size(receivers_[i]) == sizeof(BidT));
 
                 pbid = (BidT*)wb_receiver_get_data(receivers_[i]);
-                assert(pbid->robot_id == i);
+                assert(pbid->robotId == i);
 
-                Event* event = events_.at(pbid->event_id).get();
-                event->updateAuction(pbid->robot_id, pbid->bid_value, pbid->event_index);
+                Event* event = events_.at(pbid->eventId).get();
+                event->updateAuction(pbid->robotId, pbid->bidValue, pbid->eventIndex);
                 // TODO: Refactor this (same code above in handleAuctionEvents)
-                if (event->is_assigned()) {
-                    event_queue.emplace_back(event, MSG_EVENT_WON);
+                if (event->isAssigned()) {
+                    eventQueue.emplace_back(event, MSG_EVENT_WON);
                     auction = NULL;
-                    LOG("Robot %d won event %d\n", event->assigned_to_, event->id_);
+                    LOG("Robot %d won event %d\n", event->assignedTo_, event->id_);
                 }
 
                 wb_receiver_next_packet(receivers_[i]);
@@ -582,28 +577,28 @@ class Supervisor {
 
         // outbound
         MessageT msg;
-        bool is_gps_tick = false;
+        bool tickGPSThisStep = false;
 
-        if (clock_ >= t_next_gps_tick_) {
-            is_gps_tick = true;
-            t_next_gps_tick_ = clock_ + GPS_INTERVAL;
+        if (clock_ >= timeOfNextGPSTick) {
+            tickGPSThisStep = true;
+            timeOfNextGPSTick = clock_ + GPS_INTERVAL;
         }
 
         for (int i = 0; i < NUM_ROBOTS; i++) {
             // Send updates to the robot
             while (wb_emitter_get_channel(emitter_) != i + 1) wb_emitter_set_channel(emitter_, i + 1);
 
-            if (is_gps_tick) {
+            if (tickGPSThisStep) {
                 buildMessage(i, NULL, MSG_GPS_ONLY, &msg);
                 //        printf("sending message %d , %d \n",msg.event_id,msg.robot_id);
                 while (wb_emitter_get_channel(emitter_) != i + 1) wb_emitter_set_channel(emitter_, i + 1);
                 wb_emitter_send(emitter_, &msg, sizeof(MessageT));
             }
 
-            for (const auto& e_es_tuple : event_queue) {
-                const Event* event = e_es_tuple.first;
-                const MessageType msg_type = e_es_tuple.second;
-                if (event->is_assigned() && event->assigned_to_ != i) continue;
+            for (const auto& eventAndMessageTypeTuple : eventQueue) {
+                const Event* event = eventAndMessageTypeTuple.first;
+                const MessageType msg_type = eventAndMessageTypeTuple.second;
+                if (event->isAssigned() && event->assignedTo_ != i) continue;
 
                 buildMessage(i, event, msg_type, &msg);
                 while (wb_emitter_get_channel(emitter_) != i + 1) wb_emitter_set_channel(emitter_, i + 1);
@@ -616,13 +611,13 @@ class Supervisor {
         }
 
         // Keep track of our proximity/colission paramter
-        collisionDetection(step_size);
+        collisionDetection(stepSize);
 
         // Keep track of distance travelled by all robots
-        statTotalDistance(step_size);
+        calcStatTotalDistance(stepSize);
 
         // Time to end the experiment?
-        if (num_events_handled_ >= TOTAL_EVENTS_TO_HANDLE || (MAX_RUNTIME > 0 && clock_ >= MAX_RUNTIME)) {
+        if (numEventsHandled >= TOTAL_EVENTS_TO_HANDLE || (MAX_RUNTIME > 0 && clock_ >= MAX_RUNTIME)) {
             for (int i = 0; i < NUM_ROBOTS; i++) {
                 // LOG("Sending MSG_QUIT message to robot %d\n", i);
                 buildMessage(i, NULL, MSG_QUIT, &msg);
@@ -630,10 +625,10 @@ class Supervisor {
                 wb_emitter_send(emitter_, &msg, sizeof(MessageT));
             }
             double clock_s = ((double)clock_) / 1000.0;
-            double ehr = ((double)num_events_handled_) / clock_s;
-            double perf = ((double)num_events_handled_) / stat_total_distance_;
+            double ehr = ((double)numEventsHandled) / clock_s;
+            double perf = ((double)numEventsHandled) / statTotalDistance;
 
-            LOG("Handled %d events in %d seconds, events handled per second = %.2f\n", num_events_handled_,
+            LOG("Handled %d events in %d seconds, events handled per second = %.2f\n", numEventsHandled,
                 (int)clock_ / 1000, ehr);
 
             // print proximity matrix (seconds)
@@ -643,7 +638,7 @@ class Supervisor {
                 stringstream ss;
                 ss << "Robot " << i << ": ";
                 for (int j = 0; j < NUM_ROBOTS; ++j) {
-                    ss << j << ": " << fixed << std::setprecision(2) << proximity_time_[i][j];
+                    ss << j << ": " << fixed << std::setprecision(2) << proximityTime_[i][j];
                     if (j < NUM_ROBOTS - 1) ss << ", ";
                 }
                 LOG("%s\n", ss.str().c_str());
@@ -651,20 +646,19 @@ class Supervisor {
             // print wall proximity times
             LOG("*********PROXIMITY TO WALL*********\n");
             for (int i = 0; i < NUM_ROBOTS; ++i) {
-                LOG("Robot %d was near a wall for %.2f seconds.\n", i, proximity_wall_time_[i]);
+                LOG("Robot %d was near a wall for %.2f seconds.\n", i, proximityWallTime_[i]);
             }
 
             // final metric for any proximity
             LOG("*********ANY PROXIMITY METRIC*********\n");
-            LOG("Total time any robot was near another robot or a wall: %.2f seconds\n",
-                proximity_any_time_);
+            LOG("Total time any robot was near another robot or a wall: %.2f seconds\n", proximityAnyTime_);
 
             // battery used
             LOG("*********BATTERY USED METRIC*********\n");
             for (int i = 0; i < NUM_ROBOTS; ++i) {
-                LOG("Battery usage for robot %d: %dms, which corresponds to %.2f %% of total battery "
-                    "life\n",
-                    i, robot_battery_used[i], (robot_battery_used[i] * 100.0) / MAX_BATTERY_LIFETIME);
+                double batteryAsPercentage = (robotBatteryUsed[i] * 100.0) / MAX_BATTERY_LIFETIME;
+                LOG("Battery usage for robot %d: %dms - corresponds to %.2f %% of total battery life\n", i,
+                    robotBatteryUsed[i], batteryAsPercentage);
             }
 
             LOG("Performance: %f\n", perf);
@@ -679,12 +673,12 @@ class Supervisor {
 // Gets called by webots at robot_live(reset)
 void link_event_nodes() {
     const char kEventNameFormat[] = "e%d";
-    char node_name[16];
+    char nodeName[16];
 
     for (int i = 0; i < MAX_EVENTS; ++i) {
-        sprintf(node_name, kEventNameFormat, i);
-        g_event_nodes[i] = wb_supervisor_node_get_from_def(node_name);
-        g_event_nodes_free.push_back(g_event_nodes[i]);
+        sprintf(nodeName, kEventNameFormat, i);
+        g_eventNodes[i] = wb_supervisor_node_get_from_def(nodeName);
+        g_eventNodesFree.push_back(g_eventNodes[i]);
     }
 }
 

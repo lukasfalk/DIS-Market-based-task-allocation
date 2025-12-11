@@ -5,6 +5,11 @@
 
 #include "geometry.hpp"
 
+struct Path {
+    std::vector<Point2d> waypoints;
+    double totalDistance = 0.0;
+};
+
 class PathPlanner {
    public:
     PathPlanner();
@@ -13,26 +18,16 @@ class PathPlanner {
      * @brief Finds shortest path from start to goal using A* on visibility graph.
      * @return Vector of points (start -> ... -> goal). Empty if no path.
      */
-    std::vector<Point2d> findPath(const Point2d& start, const Point2d& goal);
+    Path findPath(const Point2d& start, const Point2d& goal);
 
     /**
      * @brief Public access to adjacency matrix (useful for debug visualization)
      */
-    const std::vector<std::vector<double>>& getAdjMatrix() const { return adj_matrix_; }
+    const std::vector<std::vector<double>>& getAdjMatrix() const { return adjMatrix_; }
 
    private:
     // The adjacency matrix is precomputed based on MapConfig
-    std::vector<std::vector<double>> adj_matrix_;
+    std::vector<std::vector<double>> adjMatrix_;
 };
-
-/**
- * @brief C-style interface for pathfinding (compatibility wrapper)
- * @param start Start point
- * @param goal Goal point
- * @param path_buffer Buffer to store the path
- * @param max_size Maximum number of points in buffer
- * @return Total path length, or -1.0 if failed
- */
-double get_path(Point2d start, Point2d goal, Point2d* path_buffer, int max_size);
 
 #endif  // PATHFINDING_HPP

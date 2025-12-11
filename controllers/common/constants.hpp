@@ -26,9 +26,9 @@
 #define BIAS_SPEED 400
 
 // --- Control & Navigation ---
-#define STATECHANGE_DIST 10  // Min value of all sensor inputs combined to enter obstacle avoidance mode
+#define STATECHANGE_DIST 580  // Min value of all sensor inputs combined to enter obstacle avoidance mode
 #define MAX_PATH_LENGTH 50
-const double WAYPOINT_ARRIVAL_THRESHOLD = 0.01;  // Distance in meters to consider waypoint reached
+#define WAYPOINT_ARRIVAL_THRESHOLD 0.01  // Distance in meters to consider waypoint reached
 
 // --- Communication ---
 #define RX_PERIOD 2

@@ -4,7 +4,6 @@
 #include <cstdarg>
 #include <cstdio>
 
-
 /**
  * @brief Simple logging function that wraps printf.
  *
@@ -12,7 +11,7 @@
  * @param fmt The format string for the message.
  * @param ... Arguments corresponding to the format string.
  */
-static void log_msg(const char* prefix, const char* fmt, ...) {
+static void logMsg(const char* prefix, const char* fmt, ...) {
     if (prefix) {
         printf("%s", prefix);
     }
