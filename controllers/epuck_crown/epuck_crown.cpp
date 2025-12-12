@@ -52,6 +52,8 @@ WbDeviceTag right_motor;    // handler for the right wheel of the robot
 #define NUM_ROBOTS 5  // Change this also in the supervisor!
 #define MAX_RUNTIME (3 * 60 * 1000)
 
+#define COMMUNICATION_CHANNEL 1
+
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 /* Collective decision parameters */
 
@@ -127,6 +129,10 @@ static WbDeviceTag ds[NB_SENSORS];  // Handle for the infrared distance sensors
 // static WbDeviceTag radio;            // Radio
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+
+
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 /* helper functions */
 
 // Generate random number in [0,1]
@@ -139,6 +145,14 @@ void limit(int* number, int limit) {
 
 double dist(double x0, double y0, double x1, double y1) {
     return sqrt((x0 - x1) * (x0 - x1) + (y0 - y1) * (y0 - y1));
+}
+
+// Send beacon message to other robots, to link up neighborhood
+static void beacon() {
+    // Send beacon message to other robots
+    BeaconMessage packet = {MSG_BEACON, robot_id, sim_clock};
+    wb_emitter_set_channel(emitter_tag, COMMUNICATION_CHANNEL);
+    wb_emitter_send(emitter_tag, &packet, sizeof(BeaconMessage));
 }
 
 // Check if we received a message and extract information
@@ -257,6 +271,50 @@ static void receive_updates() {
         }
         // check if new event is being auctioned
         else if (msg.msg_type == MSG_EVENT_NEW) {
+            //########################## Distributed bidding #####################
+            indx = target_list_length;
+
+            // Calculate actual path distance using pathfinding (accounts for walls/obstacles)
+            Point2d start = {my_pos[0], my_pos[1]};
+            Point2d goal = {msg.event_x, msg.event_y};
+            Point2d temp_waypoint_buffer[MAX_PATH_LENGTH];
+            double d = get_path(start, goal, temp_waypoint_buffer, MAX_PATH_LENGTH);
+
+            // If pathfinding failed, use Euclidean distance as fallback
+            if (d < 0) {
+                d = dist(my_pos[0], my_pos[1], msg.event_x, msg.event_y);
+            }
+
+            int time_at_task = get_pause_duration_ms(robot_specialization, msg.task_type);
+            int time_to_travel =
+                (d / 0.5) * 1000 + 1000;  // Assuming average speed of 0.5 m/s (converted to ms) + 1s
+                                          // overhead for collisions and other delays
+
+            // Check battery: if accepting this task would exceed battery life, add penalty
+            int battery_time_left = MAX_BATTERY_LIFETIME - battery_time_used;
+
+            if (time_to_travel + time_at_task > battery_time_left) {
+                // This task would cause us to run out of battery - bid very high to refuse it
+                LOG("declining task %d: need %dms but only %dms battery left\n", msg.event_id,
+                    time_to_travel + time_at_task, battery_time_left);
+            } else {
+                // We have enough battery - use normal bidding (time to complete task)
+                double final_bid = 1.5 * time_to_travel + time_at_task - 0.01 * battery_time_left;
+                // 100% battery:  1.5 * 11200 + 5000 - 0.01 * 120000 = 16800 + 5000 - 1200 = 20600
+                // 50% battery:   1.5 * 11200 + 5000 - 0.01 * 60000  = 16800 + 5000 - 600  = 21200
+                // 10% battery:   1.5 * 11200 + 5000 - 0.01 * 12000  = 16800 + 5000 - 120  = 21680
+                // Thus, more battery left results in a slightly cheaper/stronger bid (more attractive)
+
+                // Send my bid to the supervisor
+                const BidT my_bid = {robot_id, msg.MSG_FLOODING, final_bid, indx};
+                LOG("sending bid for event %d with value %.2f at index %d\n", msg.event_id, final_bid,
+                    indx);
+                
+                wb_emitter_set_channel(emitter_tag, COMMUNICATION_CHANNEL);
+                wb_emitter_send(emitter_tag, &my_bid, sizeof(BidT));
+            }            
+            /*
+            //########################## Centralized bidding #####################
             indx = target_list_length;
 
             // Calculate actual path distance using pathfinding (accounts for walls/obstacles)
@@ -297,6 +355,63 @@ static void receive_updates() {
                 wb_emitter_set_channel(emitter_tag, robot_id + 1);
                 wb_emitter_send(emitter_tag, &my_bid, sizeof(BidT));
             }
+            */
+        }
+        else if (msg.msg_type == MSG_BEACON) {
+            /*
+            BeaconMessage packet = {MSG_BEACON, robot_id, sim_clock};
+            wb_emitter_set_channel(emitter_tag, COMMUNICATION_CHANNEL);
+            wb_emitter_send(emitter_tag, &packet, sizeof(BeaconMessage));
+            */
+
+            const double *data = wb_receiver_get_data(receiver_tag);;
+            const BeaconMessage *received_packet = (const BeaconMessage*)data;
+
+            LOG("Received beacon from robot %d at time %dms\n", received_packet->robot_id, received_packet->timestamp);
+            // Add received beacon info to neighborhood structure
+            for (i = 0; i < NUM_ROBOTS; i++) {
+                if (neighborhood.neighbors[i] == received_packet->robot_id) {
+                    neighborhood.sim_clocks[i] = received_packet->sim_clock;
+                    break;  // Exit loop once the robot is found
+                }
+            }
+        }
+        else if (msg.msg_type == MSG_FLOODING) {
+            // Flooding. Emit all known bids to neighbors, including this one
+            const BidsT bids_packet;
+            bool new_info = false;
+            for (int i = 0; i < NUM_ROBOTS; i++) {
+                new_info = neighborhood.neighbors[i] == bids_packet.robot_id[i] ? true : false;   // or whatever your robot IDs actually are
+                new_info = neighborhood.bids[i] == bids_packet.bid_values[i] ? true : false; 
+            }
+            if (new_info) {
+                for (int i = 0; i < NUM_ROBOTS; i++) {
+                    bids_packet.robot_id[i] = neighborhood.neighbors[i];
+                    bids_packet.bid_values[i] = neighborhood.bids[i];
+                }
+                bids_packet.event_id = msg.event_id;
+                wb_emitter_set_channel(emitter_tag, COMMUNICATION_CHANNEL);
+                wb_emitter_send(emitter_tag, &bids_packet, sizeof(BidsT));
+            } else{
+                LOG("No new info to flood\n");
+                // Determine if robot won the auction based on bids
+                uint16_t lowest_bid_robot = -1;
+                double lowest_bid_value = std::numeric_limits<double>::max();
+                for (int i = 0; i < NUM_ROBOTS; i++) {
+                    if (BidsT.bid_values[i] < lowest_bid_value) {
+                        lowest_bid_value = BidsT.bid_values[i];
+                        lowest_bid_robot = BidsT.robot_id[i];
+                    }
+                }
+                if (lowest_bid_robot == robot_id) {
+                    LOG("I won the auction for event %d\n", bids_packet.event_id);
+                    for (int i = 0; i < NUM_ROBOTS; i++) {
+                        auction_wins.robot_id[i] = neighborrhood.neighbors[i];
+                    }
+                    auction_wins.event_id = bids_packet.event_id;
+                    // Perform actions for winning the auction
+                }
+            }
         }
     }
 
@@ -333,9 +448,10 @@ static void receive_updates() {
             buff[1] = my_pos[1];
         }
         wb_emitter_send(emitter_tag, &buff, (5 * target_list_length) * sizeof(float));
-        wb_emitter_set_channel(emitter_tag, robot_id + 1);
+        wb_emitter_set_channel(emitter_tag, COMMUNICATION_CHANNEL);
     }
 }
+
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 /* RESET and INIT (combined in function reset()) */
@@ -363,6 +479,9 @@ void reset(void) {
     pause_active = 0;
     battery_time_used = 0;
     travel_start_time = 0;
+
+    NeighborhoodT neighborhood;
+    AuctionWinsT auction_wins;
 
     // Init target positions to "INVALID"
     for (i = 0; i < 99; i++) {
@@ -398,11 +517,11 @@ void reset(void) {
     // Link with webots nodes and devices (attention, use robot_id+1 as channels, because
     // channel 0 is reseved for physics plugin)
     emitter_tag = wb_robot_get_device("emitter");
-    wb_emitter_set_channel(emitter_tag, robot_id + 1);
+    wb_emitter_set_channel(emitter_tag, COMMUNICATION_CHANNEL);
 
     receiver_tag = wb_robot_get_device("receiver");
     wb_receiver_enable(receiver_tag, RX_PERIOD);  // listen to incoming data every 1000ms
-    wb_receiver_set_channel(receiver_tag, robot_id + 1);
+    wb_receiver_set_channel(receiver_tag, COMMUNICATION_CHANNEL);
 
     // Seed random generator
     srand(getpid());
@@ -557,6 +676,21 @@ void run(int ms) {
 
     // Get info from supervisor
     receive_updates();
+    // [TODO]: receive_updates from other robots (radio). receive_updates() should flood with bids.
+    // Then determine if bid winner and go to the actions section.
+    // Remove robots out of range from neighborhood structure.
+    for (int i = 0; i < NUM_ROBOTS; i++) {
+        if (neighborhood.neighbors[i] != -1 &&
+            (sim_clock - neighborhood.sim_clocks[i] > 5000)) {  // 5 seconds timeout
+            LOG("Robot %d is out of range, removing from neighborhood\n", neighborhood.neighbors[i]);
+            neighborhood.neighbors[i] = -1;
+            neighborhood.bids[i] = 0.0;
+            neighborhood.sim_clocks[i] = 0;
+        }
+    }
+
+    beacon();
+
 
     if (state == DEAD) {
         // Only step the robot clock forward and return
