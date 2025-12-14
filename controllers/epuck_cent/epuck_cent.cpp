@@ -1,11 +1,7 @@
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
- * file:        epuck_crown.c
- * author:
- * description: E-puck file for market-based task allocations (DIS lab05)
- *
- * $Revision$	february 2016 by Florian Maushart
- * $Date$
- * $Author$      Last update 2024 by Wanting Jin
+ * file:        epuck_cent.cpp
+ * description: Centralized controller.
+ *              Receives bids from robots and assigns tasks.
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 #include <math.h>
@@ -66,12 +62,15 @@ RobotState state;                // State of the robot
 double my_pos[3];                // X, Z, Theta of this robot
 bool target_valid = false;       // boolean; whether we are supposed to go to the target
 
-struct Target {
+struct LocalTaskInfo {
     double x;
     double y;
     int id;
+    TaskType type;  // Task type for pause duration calculation
 };
-std::vector<Target> targets;
+std::vector<LocalTaskInfo> targets;
+
+int last_completed_task_id = -1;  // ID of the last task we completed (for sending completion msg)
 
 int lmsg, rmsg;  // Communication variables
 int indx;        // Event index to be sent to the supervisor
@@ -155,47 +154,15 @@ static void receive_updates() {
             wb_robot_cleanup();
             exit(0);
         } else if (msg.msgType == MSG_EVENT_DONE) {
-            // If event is done, delete it from vector
-            auto it = std::remove_if(targets.begin(), targets.end(),
-                                     [&](const Target& t) { return t.id == msg.eventId; });
-            if (it != targets.end()) {
-                targets.erase(it, targets.end());
-            }
-
-            if (targets.empty()) target_valid = false;
-
-            // Stop and pause based on robot type and event type
-            wb_motor_set_velocity(left_motor, 0.0);
-            wb_motor_set_velocity(right_motor, 0.0);
-            // set pause deadline (sim_clock is in ms)
-            int task_time_ms = get_pause_duration_ms(robot_specialization, msg.taskType);
-            pause_until = sim_clock + task_time_ms;
-            pause_active = 1;
-            state = RobotState::STAY;
-
-            // Update battery consumption for this task
-            // 1. Consumption during travel
-            if (travel_start_time > 0) {
-                int travel_time_ms = sim_clock - travel_start_time;
-                battery_time_used += travel_time_ms;
-                LOG("used %dms traveling to task (battery used so far: %dms / %dms)\n", travel_time_ms,
-                    battery_time_used, MAX_BATTERY_LIFETIME);
-                travel_start_time = 0;  // reset
-            }
-
-            // 2. Consumption at task
-            battery_time_used += task_time_ms;
-            LOG("used %dms at task (battery used so far: %dms / %dms)\n", task_time_ms, battery_time_used,
-                MAX_BATTERY_LIFETIME);
-
-            // Reset waypoint path for next target
-            waypoint_path.clear();
-            current_waypoint_idx = 0;
+            // NOTE: In the new logic, the robot detects its own arrival.
+            // This handler is kept for backward compatibility but should not be triggered.
+            // The supervisor no longer sends MSG_EVENT_DONE based on proximity.
+            LOG("Warning: Received MSG_EVENT_DONE from supervisor (legacy behavior)\n");
         } else if (msg.msgType == MSG_EVENT_WON) {
             // Insert event at index
             LOG("Won bid for task %d, adding to list of tasks at index %d\n", msg.eventId, msg.eventIndex);
 
-            Target new_target = {msg.eventX, msg.eventY, msg.eventId};
+            LocalTaskInfo new_target = {msg.eventX, msg.eventY, msg.eventId, msg.taskType};
             if (msg.eventIndex >= 0 && msg.eventIndex <= (int)targets.size()) {
                 targets.insert(targets.begin() + msg.eventIndex, new_target);
             } else {
@@ -322,7 +289,12 @@ static void receive_updates() {
                 // Thus, more battery left results in a slightly cheaper/stronger bid (more attractive)
 
                 // Send my bid to the supervisor
-                const BidT my_bid = {robot_id, msg.eventId, final_bid, indx};
+                BidT my_bid;
+                my_bid.msgType = ROBOT_MSG_BID;
+                my_bid.robotId = robot_id;
+                my_bid.eventId = msg.eventId;
+                my_bid.bidValue = final_bid;
+                my_bid.eventIndex = indx;
                 LOG("sending bid for event %d with value %.2f at index %d (insertion type %d)\n",
                     msg.eventId, final_bid, indx, whereInsert);
                 wb_emitter_set_channel(emitter_tag, robot_id + 1);
@@ -383,6 +355,7 @@ void reset(void) {
     pause_active = 0;
     battery_time_used = 0;
     travel_start_time = 0;
+    last_completed_task_id = -1;
 
     // Init target positions
     targets.clear();
@@ -597,6 +570,19 @@ void run(int ms) {
             msl = 0;
             msr = 0;
         } else {
+            // Task is NOW actually complete - send completion message to supervisor
+            if (last_completed_task_id != -1) {
+                RobotStateMsg done_msg;
+                done_msg.msgType = ROBOT_MSG_STATE;
+                done_msg.robotId = robot_id;
+                done_msg.currentTaskId = last_completed_task_id;
+                done_msg.currentBid = 0;
+                done_msg.isTaskBeingCompleted = false;
+                done_msg.isTaskComplete = true;  // NOW it's truly complete
+                wb_emitter_send(emitter_tag, &done_msg, sizeof(done_msg));
+                LOG("Task %d fully completed after working pause.\n", last_completed_task_id);
+                last_completed_task_id = -1;  // Reset after sending
+            }
             // pause expired -> resume normal behavior
             pause_active = 0;
         }
@@ -635,17 +621,48 @@ void run(int ms) {
                             (int)waypoint_path.size(), current_waypoint.x, current_waypoint.y);
                         current_waypoint_idx++;
                         if (current_waypoint_idx >= (int)waypoint_path.size()) {
-                            // Reached final destination - track battery consumed during travel
+                            // Reached final destination - we have arrived at the task!
                             msl = 0;
                             msr = 0;
+
+                            // 1. Track battery consumed during travel
                             int travel_time_ms = sim_clock - travel_start_time;
                             battery_time_used += travel_time_ms;
                             LOG("  > Arrived at task - traveled for %dms; total battery used: %dms / %dms "
                                 "(%.2f %%)\n",
                                 travel_time_ms, battery_time_used, MAX_BATTERY_LIFETIME,
                                 (battery_time_used * 100.0) / MAX_BATTERY_LIFETIME);
-                            LOG("    > Resetting waypoints and travel time for next task\n");
-                            waypoint_path.clear();  // Reset path for next target
+
+                            // 2. Start "Working" Pause
+                            if (!targets.empty()) {
+                                int task_time_ms =
+                                    get_pause_duration_ms(robot_specialization, targets[0].type);
+                                pause_until = sim_clock + task_time_ms;
+                                pause_active = 1;
+                                battery_time_used += task_time_ms;  // Add task cost
+                                LOG("  > Working on task %d for %dms\n", targets[0].id, task_time_ms);
+
+                                // 3. Broadcast "BEING COMPLETED" Message to supervisor
+                                RobotStateMsg working_msg;
+                                working_msg.msgType = ROBOT_MSG_STATE;
+                                working_msg.robotId = robot_id;
+                                working_msg.currentTaskId = targets[0].id;
+                                working_msg.currentBid = 0;
+                                working_msg.isTaskBeingCompleted = true;
+                                working_msg.isTaskComplete = false;  // Not complete yet!
+                                wb_emitter_send(emitter_tag, &working_msg, sizeof(working_msg));
+
+                                // 4. Store task ID for completion broadcast after pause, then remove from
+                                // list
+                                last_completed_task_id = targets[0].id;
+                                targets.erase(targets.begin());
+                            }
+
+                            if (targets.empty()) target_valid = false;
+                            state = RobotState::STAY;
+
+                            // 5. Reset for next target
+                            waypoint_path.clear();
                             current_waypoint_idx = 0;
                             travel_start_time = 0;
                         } else {
@@ -695,7 +712,7 @@ void run(int ms) {
 }
 
 // MAIN
-int main(int argc, char** argv) {
+int main() {
     reset();
 
     // RUN THE MAIN ALGORIHM

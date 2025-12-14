@@ -56,10 +56,10 @@ Solid {
   boundingObject USE wall1
 }
 DEF VisibilityGraph Transform {
-  translation 0 0 -0.045
+  translation 0 0 -0.0489
   children [
     DEF VGNodeA Transform {
-      translation -0.575 0.575 0
+      translation -0.58 0.58 0
       rotation 0 1 0 0
       children [
         Shape {
@@ -77,7 +77,7 @@ DEF VisibilityGraph Transform {
       translationStep 0.005
     }
     DEF VGNodeB Transform {
-      translation 0.07 0.575 0
+      translation 0.075 0.58 0
       rotation 0 1 0 0
       children [
         Shape {
@@ -95,7 +95,7 @@ DEF VisibilityGraph Transform {
       translationStep 0.005
     }
     DEF VGNodeC Transform {
-      translation 0.18 0.575 0
+      translation 0.175 0.58 0
       rotation 0 1 0 0
       children [
         Shape {
@@ -113,7 +113,7 @@ DEF VisibilityGraph Transform {
       translationStep 0.005
     }
     DEF VGNodeD Transform {
-      translation 0.575 0.575 0
+      translation 0.58 0.58 0
       rotation 0 1 0 0
       children [
         Shape {
@@ -131,7 +131,7 @@ DEF VisibilityGraph Transform {
       translationStep 0.005
     }
     DEF VGNodeE Transform {
-      translation -0.575 0.055 0
+      translation -0.58 0.05 0
       rotation 0 1 0 0
       children [
         Shape {
@@ -149,7 +149,7 @@ DEF VisibilityGraph Transform {
       translationStep 0.005
     }
     DEF VGNodeF Transform {
-      translation -0.215 0.055 0
+      translation -0.215 0.05 0
       rotation 0 1 0 0
       children [
         Shape {
@@ -167,7 +167,7 @@ DEF VisibilityGraph Transform {
       translationStep 0.005
     }
     DEF VGNodeG Transform {
-      translation -0.575 -0.055 0
+      translation -0.58 -0.05 0
       rotation 0 1 0 0
       children [
         Shape {
@@ -185,7 +185,7 @@ DEF VisibilityGraph Transform {
       translationStep 0.005
     }
     DEF VGNodeH Transform {
-      translation -0.215 -0.055 0
+      translation -0.215 -0.05 0
       rotation 0 1 0 0
       children [
         Shape {
@@ -203,7 +203,7 @@ DEF VisibilityGraph Transform {
       translationStep 0.005
     }
     DEF VGNodeI Transform {
-      translation 0.07 -0.25 0
+      translation 0.075 -0.25 0
       rotation 0 1 0 0
       children [
         Shape {
@@ -221,7 +221,7 @@ DEF VisibilityGraph Transform {
       translationStep 0.005
     }
     DEF VGNodeJ Transform {
-      translation 0.18 -0.25 0
+      translation 0.175 -0.25 0
       rotation 0 1 0 0
       children [
         Shape {
@@ -239,7 +239,7 @@ DEF VisibilityGraph Transform {
       translationStep 0.005
     }
     DEF VGNodeK Transform {
-      translation -0.575 -0.575 0
+      translation -0.58 -0.58 0
       rotation 0 1 0 0
       children [
         Shape {
@@ -257,7 +257,7 @@ DEF VisibilityGraph Transform {
       translationStep 0.005
     }
     DEF VGNodeL Transform {
-      translation 0.575 -0.575 0
+      translation 0.58 -0.58 0
       rotation 0 1 0 0
       children [
         Shape {
@@ -433,7 +433,7 @@ Robot {
     }
   ]
   name "supervisor"
-  controller "supervisor_cent"
+  controller "supervisor_dist"
   supervisor TRUE
 }
 DEF e0 Transform {
@@ -611,28 +611,26 @@ DEF e9 Transform {
 DEF e-puck0 epuck_rangeColA {
   translation 0.459002 0.06 8.03486e-05
   name "e-puck0"
-  controller "epuck_cent"
-  emitter_channel 1
-  receiver_channel 1
+  controller "epuck_dist"
 }
 DEF e-puck1 epuck_rangeColA {
   translation -0.44 -0.15 -6.39625e-05
   name "e-puck1"
-  controller "epuck_cent"
+  controller "epuck_dist"
   emitter_channel 2
   receiver_channel 2
 }
 DEF e-puck2 epuck_rangeColB {
   translation 0.18 -0.34 -6.39615e-05
   name "e-puck2"
-  controller "epuck_cent"
+  controller "epuck_dist"
   emitter_channel 3
   receiver_channel 3
 }
 DEF e-puck3 epuck_rangeColB {
   translation -0.1 0.41 -6.3962e-05
   name "e-puck3"
-  controller "epuck_cent"
+  controller "epuck_dist"
   emitter_channel 4
   receiver_channel 4
 }
@@ -640,7 +638,7 @@ DEF e-puck4 epuck_rangeColB {
   translation -0.476769 0.574344 -6.3962e-05
   rotation 0 1 0 0
   name "e-puck4"
-  controller "epuck_cent"
+  controller "epuck_dist"
   emitter_channel 5
   receiver_channel 5
 }
