@@ -192,6 +192,14 @@ for arr in all_completed_arrays:
 mean_active = np.mean(padded_active, axis=0)
 mean_completed = np.mean(padded_completed, axis=0)
 std_active = np.std(padded_active, axis=0)
+
+# Print final metrics
+print("=" * 40)
+print("       OVERALL RUN METRICS")
+print("=" * 40)
+print(f"Avg Active Robots:      {np.mean(mean_active):.2f}")
+print(f"Total Tasks Completed:  {mean_completed[-1]:.1f}")
+print("=" * 40 + "\n")
 std_completed = np.std(padded_completed, axis=0)
 
 # Apply moving average to smooth the active robots curve
@@ -208,21 +216,30 @@ ax1.set_xlabel('Time (s)')
 ax1.set_ylabel('Active Robots', color='blue')
 ax1.tick_params(axis='y', labelcolor='blue')
 ax1.set_ylim(0, expected_robot_count + 0.5)
-ax1.grid(True, alpha=0.3)
+ax1.legend(loc='lower center')
+
+# Add textbox with metrics
+textstr_active = f'Active Robots\nAvg: {np.mean(mean_active):.2f} ± {np.mean(std_active):.2f}'
+props = dict(boxstyle='round', facecolor='wheat', alpha=0.8)
+ax1.text(0.02, 0.98, textstr_active, transform=ax1.transAxes, fontsize=10,
+         verticalalignment='top', bbox=props)
 
 # Plot 2: Completed Tasks (right y-axis)
 ax2 = ax1.twinx()
 ax2.plot(common_time_axis / 1000, mean_completed, label='Avg Completed Tasks', color='green', linewidth=2)
 ax2.fill_between(common_time_axis / 1000, mean_completed - std_completed, mean_completed + std_completed, color='green', alpha=0.1, label='Std Dev (Tasks)')
 ax2.set_ylabel('Total Completed Tasks', color='green')
-ax2.set_ylim(0, 75)
 ax2.tick_params(axis='y', labelcolor='green')
+ax2.legend(loc='lower right')
+ax2.set_ylim(0, 70)
+ax2.grid(True, alpha=0.3)
 
-# Combined legend
-lines1, labels1 = ax1.get_legend_handles_labels()
-lines2, labels2 = ax2.get_legend_handles_labels()
-ax1.legend(lines1 + lines2, labels1 + labels2, loc='lower center')
 
-plt.title(f'Active Robots & Cumulative Tasks Completed (over {len(filenames)} runs)')
+# Add textbox with metrics
+textstr_tasks = f'Completed Tasks\nTotal: {mean_completed[-1]:.1f} ± {std_completed[-1]:.1f}'
+ax2.text(0.7, 0.98, textstr_tasks, transform=ax2.transAxes, fontsize=10,
+         verticalalignment='top', bbox=props)
+
+plt.title(f'Submicroscopic model - Average over {len(padded_active)} runs')
 plt.tight_layout()
 plt.show()

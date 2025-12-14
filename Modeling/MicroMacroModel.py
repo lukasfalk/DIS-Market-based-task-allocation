@@ -179,6 +179,17 @@ def main():
     print("Running Macroscopic simulation...")
     macro_active, macro_tasks = run_macroscopic()
 
+    # --- Print Final Metrics ---
+    print("\n" + "=" * 40)
+    print("       FINAL METRICS")
+    print("=" * 40)
+    print(f"Micro Avg Active Robots:     {np.mean(micro_mean_active):.2f}")
+    print(f"Micro Total Tasks Completed: {micro_mean_tasks[-1]:.1f}")
+    print("-" * 40)
+    print(f"Macro Avg Active Robots:     {np.mean(macro_active):.2f}")
+    print(f"Macro Total Tasks Completed: {macro_tasks[-1]:.1f}")
+    print("=" * 40 + "\n")
+
     # --- C. Plotting ---
     time_axis = np.linspace(0, SIM_DURATION, steps)
     fig, ax1 = plt.subplots(figsize=(10, 6))
@@ -190,12 +201,17 @@ def main():
                      micro_mean_active + micro_std_active, 
                      color='blue', alpha=0.1, label='Micro StdDev (Active)')
     ax1.plot(time_axis, macro_active, label='Macro Model (Active)', color='red', linestyle='--', linewidth=2.5)
-    
+    ax1.legend(loc='lower center')
     ax1.set_xlabel('Time (s)')
     ax1.set_ylabel('Active Robots', color='blue')
     ax1.tick_params(axis='y', labelcolor='blue')
     ax1.set_ylim(0, NUM_ROBOTS + 0.5)
-    ax1.grid(True, alpha=0.3)
+    
+    # Add textbox with metrics
+    textstr_active = f'Active robots \nMicro Avg: {np.mean(micro_mean_active):.2f} ± {np.mean(micro_std_active):.2f}\nMacro Avg: {np.mean(macro_active):.2f}'
+    props = dict(boxstyle='round', facecolor='wheat', alpha=0.8)
+    ax1.text(0.02, 0.98, textstr_active, transform=ax1.transAxes, fontsize=10,
+             verticalalignment='top', bbox=props)
 
     # Plot 2: Completed Tasks (right y-axis)
     ax2 = ax1.twinx()
@@ -205,18 +221,18 @@ def main():
                      micro_mean_tasks + micro_std_tasks, 
                      color='green', alpha=0.1, label='Micro StdDev (Tasks)')
     ax2.plot(time_axis, macro_tasks, label='Macro Model (Tasks)', color='orange', linestyle='--', linewidth=2.5)
+    ax2.set_ylim(0, 70)
+    ax2.set_xlabel('Time (s)')
+    ax2.set_ylabel('Total Completed Tasks')
+    ax2.set_title('Microscopic vs Macroscopic Model Comparison')
+    ax2.legend(loc='lower right')
+    ax2.grid(True, alpha=0.3)
     
-    ax2.set_ylabel('Total Completed Tasks', color='green')
-    ax2.set_ylim(0, 75)
+    # Add textbox with metrics
+    textstr_tasks = f'Completed tasks \nMicro Total: {micro_mean_tasks[-1]:.1f} ± {micro_std_tasks[-1]:.1f}\nMacro Total: {macro_tasks[-1]:.1f}'
+    ax2.text(0.7, 0.98, textstr_tasks, transform=ax2.transAxes, fontsize=10,
+             verticalalignment='top', bbox=props)
 
-    ax2.tick_params(axis='y', labelcolor='green')
-
-    # Combined legend
-    lines1, labels1 = ax1.get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines1 + lines2, labels1 + labels2, loc='lower right')
-
-    plt.title('Active Robots & Cumulative Tasks Completed (Micro vs Macro)')
     plt.tight_layout()
     plt.show()
 
