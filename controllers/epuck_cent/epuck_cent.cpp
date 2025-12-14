@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <array>
+#include <limits>
 #include <vector>
 
 #include "../common/communication.hpp"
@@ -72,9 +73,6 @@ std::vector<LocalTaskInfo> targets;
 
 int last_completed_task_id = -1;  // ID of the last task we completed (for sending completion msg)
 
-int lmsg, rmsg;  // Communication variables
-int indx;        // Event index to be sent to the supervisor
-
 std::vector<float> buff;  // Buffer for physics plugin
 
 // Pathfinding and waypoint following
@@ -102,6 +100,89 @@ static int get_pause_duration_ms(RobotSpec robot_specialization, TaskType task_t
         default:
             return 0;  // Fallback but should never happen
     }
+}
+
+// Calculate the insertion cost for adding a task at a specific position in the targets list
+// Returns the MARGINAL cost (extra distance) of inserting at this position
+static double calculate_insertion_cost(const Point2d& new_task_pos, int insert_idx) {
+    Point2d before_pos, after_pos;
+    bool has_after = false;
+
+    // Determine the "before" position
+    if (insert_idx == 0) {
+        // Inserting at start: before = my current position
+        before_pos = {my_pos[0], my_pos[1]};
+    } else {
+        // Inserting in middle/end: before = previous task in list
+        before_pos = {targets[insert_idx - 1].x, targets[insert_idx - 1].y};
+    }
+
+    // Determine the "after" position (if any)
+    if (insert_idx < (int)targets.size()) {
+        after_pos = {targets[insert_idx].x, targets[insert_idx].y};
+        has_after = true;
+    }
+
+    // Calculate distances using pathfinding
+    Path p_before_to_new = planner.findPath(before_pos, new_task_pos);
+    double d_before_to_new = p_before_to_new.waypoints.empty() ? utils::dist(before_pos, new_task_pos)
+                                                               : p_before_to_new.totalDistance;
+
+    if (!has_after) {
+        // Appending to end: cost is simply distance from last task to new task
+        return d_before_to_new;
+    }
+
+    // Inserting in middle: cost = (before->new) + (new->after) - (before->after)
+    Path p_new_to_after = planner.findPath(new_task_pos, after_pos);
+    double d_new_to_after = p_new_to_after.waypoints.empty() ? utils::dist(new_task_pos, after_pos)
+                                                             : p_new_to_after.totalDistance;
+
+    Path p_before_to_after = planner.findPath(before_pos, after_pos);
+    double d_before_to_after = p_before_to_after.waypoints.empty() ? utils::dist(before_pos, after_pos)
+                                                                   : p_before_to_after.totalDistance;
+
+    return d_before_to_new + d_new_to_after - d_before_to_after;
+}
+
+// Find the best insertion position for a task and return {best_index, marginal_distance}
+static std::pair<int, double> find_best_insertion(const Point2d& task_pos) {
+    double best_cost = std::numeric_limits<double>::infinity();
+    int best_idx = 0;
+
+    if (targets.empty()) {
+        // List is empty: cost is simply path from me to the task
+        Path p = planner.findPath({my_pos[0], my_pos[1]}, task_pos);
+        double dist = p.waypoints.empty() ? utils::dist(my_pos[0], my_pos[1], task_pos.x, task_pos.y)
+                                          : p.totalDistance;
+        return std::make_pair(0, dist);
+    }
+
+    // Try inserting at every position (including end)
+    for (size_t i = 0; i <= targets.size(); ++i) {
+        double insertion_cost = calculate_insertion_cost(task_pos, i);
+        if (insertion_cost < best_cost) {
+            best_cost = insertion_cost;
+            best_idx = i;
+        }
+    }
+
+    return std::make_pair(best_idx, best_cost);
+}
+
+// Calculate the full bid value including time and battery considerations
+static double calculate_full_bid(double marginal_distance, TaskType task_type) {
+    int time_at_task = get_pause_duration_ms(robot_specialization, task_type);
+    int time_to_travel = (marginal_distance / 0.5) * 1000 + 1000;  // Assuming 0.5 m/s + 1s overhead
+    int battery_left = MAX_BATTERY_LIFETIME - battery_time_used;
+
+    // Check if we have enough battery
+    if (time_to_travel + time_at_task > battery_left) {
+        return -1.0;  // Can't accept this task
+    }
+
+    // Same formula: prioritize travel time, account for task time and battery
+    return 1.5 * time_to_travel + time_at_task - 0.01 * battery_left;
 }
 
 // Proximity and radio handles
@@ -173,130 +254,33 @@ static void receive_updates() {
         }
         // check if new event is being auctioned
         else if (msg.msgType == MSG_EVENT_NEW) {
-            indx = 0;
-            double d;
-            int whereInsert = -1;
+            // Use helper functions to find best insertion position and calculate bid
+            Point2d task_pos = {msg.eventX, msg.eventY};
 
-            // --- INITIALIZATION FIX ---
-            if (targets.empty()) {
-                // Case 0: List is empty. Cost is simply path from Me -> Event
-                Point2d start = {my_pos[0], my_pos[1]};
-                Point2d goal = {msg.eventX, msg.eventY};
+            std::pair<int, double> insertion_result = find_best_insertion(task_pos);
+            int best_idx = insertion_result.first;
+            double marginal_dist = insertion_result.second;
 
-                Path path = planner.findPath(start, goal);
-                d = path.waypoints.empty() ? -1.0 : path.totalDistance;
+            // Calculate the full bid value
+            double final_bid = calculate_full_bid(marginal_dist, msg.taskType);
 
-                if (d < 0) d = utils::dist(my_pos[0], my_pos[1], msg.eventX, msg.eventY);
-
-            } else {
-                // List has items. Initialize d to Infinity so we find the true lowest insertion cost.
-                d = 100000000.0;
-
-                // Iterate through every existing task to find the best insertion slot
-                for (size_t i = 0; i < targets.size(); i++) {
-                    double current_insertion_cost = 0;
-
-                    // --- CASE 1: Insertion at the START ---
-                    if (i == 0) {
-                        // Cost: (Me->New) + (New->Task[0]) - (Me->Task[0])
-                        Path p1 = planner.findPath({my_pos[0], my_pos[1]}, {msg.eventX, msg.eventY});
-                        Path p2 = planner.findPath({targets[i].x, targets[i].y}, {msg.eventX, msg.eventY});
-                        Path p3 = planner.findPath({my_pos[0], my_pos[1]}, {targets[i].x, targets[i].y});
-
-                        double dbeforetogoal =
-                            p1.waypoints.empty() ? utils::dist(my_pos[0], my_pos[1], msg.eventX, msg.eventY)
-                                                 : p1.totalDistance;
-                        double daftertogoal = p2.waypoints.empty() ? utils::dist(targets[i].x, targets[i].y,
-                                                                                 msg.eventX, msg.eventY)
-                                                                   : p2.totalDistance;
-                        double dbeforetodafter =
-                            p3.waypoints.empty()
-                                ? utils::dist(my_pos[0], my_pos[1], targets[i].x, targets[i].y)
-                                : p3.totalDistance;
-
-                        whereInsert = 0;
-                        current_insertion_cost = dbeforetogoal + daftertogoal - dbeforetodafter;
-                    }
-                    // --- CASE 2: Insertion in the MIDDLE ---
-                    else {
-                        // Cost: (Prev->New) + (New->Curr) - (Prev->Curr)
-                        Path p1 = planner.findPath({targets[i - 1].x, targets[i - 1].y},
-                                                   {msg.eventX, msg.eventY});
-                        Path p2 = planner.findPath({targets[i].x, targets[i].y}, {msg.eventX, msg.eventY});
-                        Path p3 = planner.findPath({targets[i - 1].x, targets[i - 1].y},
-                                                   {targets[i].x, targets[i].y});
-
-                        double dbeforetogoal =
-                            p1.waypoints.empty()
-                                ? utils::dist(targets[i - 1].x, targets[i - 1].y, msg.eventX, msg.eventY)
-                                : p1.totalDistance;
-                        double daftertogoal = p2.waypoints.empty() ? utils::dist(targets[i].x, targets[i].y,
-                                                                                 msg.eventX, msg.eventY)
-                                                                   : p2.totalDistance;
-                        double dbeforetodafter = p3.waypoints.empty()
-                                                     ? utils::dist(targets[i - 1].x, targets[i - 1].y,
-                                                                   targets[i].x, targets[i].y)
-                                                     : p3.totalDistance;
-
-                        whereInsert = 1;
-                        current_insertion_cost = dbeforetogoal + daftertogoal - dbeforetodafter;
-                    }
-
-                    // CHECK: Is this insertion better than what we found so far?
-                    if (current_insertion_cost < d) {
-                        d = current_insertion_cost;
-                        indx = i;
-                    }
-                    // --- CASE 3: Appending to the END ---
-                    // --- NESTING FIX: This check happens for EVERY loop, but only triggers on the last
-                    // item ---
-                    if (i == targets.size() - 1) {
-                        // The cost to append is simply distance from Last Task -> New Event
-                        Path p_append =
-                            planner.findPath({targets[i].x, targets[i].y}, {msg.eventX, msg.eventY});
-                        double d_append =
-                            p_append.waypoints.empty()
-                                ? utils::dist(targets[i].x, targets[i].y, msg.eventX, msg.eventY)
-                                : p_append.totalDistance;
-
-                        if (d_append < d) {
-                            d = d_append;
-                            indx = i + 1;  // Insert AFTER the last element
-                            whereInsert = 2;
-                        }
-                    }
-                }
-            }
-
-            int time_at_task = get_pause_duration_ms(robot_specialization, msg.taskType);
-            int time_to_travel = (d / 0.5) * 1000 + 1000;  // Assuming average speed of 0.5 m/s (converted
-                                                           // to ms) + 1s overhead for collisions and other
-                                                           // delays
-
-            // Check battery: if accepting this task would exceed battery life, add penalty
-            int battery_time_left = MAX_BATTERY_LIFETIME - battery_time_used;
-
-            if (time_to_travel + time_at_task > battery_time_left) {
-                // This task would cause us to run out of battery - bid very high to refuse it
+            if (final_bid < 0) {
+                // This task would cause us to run out of battery - decline
+                int time_at_task = get_pause_duration_ms(robot_specialization, msg.taskType);
+                int time_to_travel = (marginal_dist / 0.5) * 1000 + 1000;
+                int battery_left = MAX_BATTERY_LIFETIME - battery_time_used;
                 LOG("declining task %d: need %dms but only %dms battery left\n", msg.eventId,
-                    time_to_travel + time_at_task, battery_time_left);
+                    time_to_travel + time_at_task, battery_left);
             } else {
-                // We have enough battery - use normal bidding (time to complete task)
-                double final_bid = 1.5 * time_to_travel + time_at_task - 0.01 * battery_time_left;
-                // 100% battery:  1.5 * 11200 + 5000 - 0.01 * 120000 = 16800 + 5000 - 1200 = 20600
-                // 50% battery:   1.5 * 11200 + 5000 - 0.01 * 60000  = 16800 + 5000 - 600  = 21200
-                // 10% battery:   1.5 * 11200 + 5000 - 0.01 * 12000  = 16800 + 5000 - 120  = 21680
-                // Thus, more battery left results in a slightly cheaper/stronger bid (more attractive)
-
                 // Send my bid to the supervisor
                 BidT my_bid;
                 my_bid.msgType = ROBOT_MSG_BID;
                 my_bid.robotId = robot_id;
                 my_bid.eventId = msg.eventId;
                 my_bid.bidValue = final_bid;
-                my_bid.eventIndex = indx;
-                LOG("sending bid for event %d with value %.2f at index %d (insertion type %d)\n",
-                    msg.eventId, final_bid, indx, whereInsert);
+                my_bid.eventIndex = best_idx;
+                LOG("sending bid for event %d with value %.2f at index %d\n", msg.eventId, final_bid,
+                    best_idx);
                 wb_emitter_set_channel(emitter_tag, robot_id + 1);
                 wb_emitter_send(emitter_tag, &my_bid, sizeof(BidT));
             }
@@ -350,7 +334,6 @@ void reset(void) {
     }
 
     sim_clock = 0;
-    indx = 0;
     pause_until = 0;
     pause_active = 0;
     battery_time_used = 0;
@@ -389,6 +372,8 @@ void reset(void) {
     // channel 0 is reseved for physics plugin)
     emitter_tag = wb_robot_get_device("emitter");
     wb_emitter_set_channel(emitter_tag, robot_id + 1);
+    double range = wb_emitter_get_range(emitter_tag);
+    LOG("Emitter range set to %.2f meters.\n", range);
 
     receiver_tag = wb_robot_get_device("receiver");
     wb_receiver_enable(receiver_tag, RX_PERIOD);  // listen to incoming data every 1000ms

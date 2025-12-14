@@ -7,7 +7,7 @@ maximizedDockId: -1
 centralWidgetVisible: 1
 renderingMode: PLAIN
 orthographicViewHeight: 1
-textFiles: 0 "controllers/epuck_dist/epuck_dist.cpp" "controllers/supervisor_dist/supervisor_dist.cpp" "controllers/epuck_cent/epuck_cent.cpp" "controllers/supervisor_cent/supervisor_cent.cpp"
+textFiles: 3 "controllers/epuck_dist/epuck_dist.cpp" "controllers/supervisor_dist/supervisor_dist.cpp" "controllers/epuck_cent/epuck_cent.cpp" "controllers/supervisor_cent/supervisor_cent.cpp"
 consoles: Console:All:All
 renderingDevicePerspectives: e-puck0:camera;1;0.820513;0;0
 renderingDevicePerspectives: e-puck1:camera;1;0.820513;0;0

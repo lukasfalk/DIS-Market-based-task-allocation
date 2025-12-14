@@ -68,10 +68,20 @@ struct LocalTaskInfo {
 
     int lastUpdateTimestamp;  // For cleaning up stale assignments (optional but good for robustness)
 };
-std::vector<LocalTaskInfo> world_state;  // Current known tasks
-int current_task_id = -1;                // ID of the task I am currently trying to do
-double current_bid_val = 0.0;            // My cost for this task
-int last_completed_task_id = -1;         // ID of the last task I completed
+std::vector<LocalTaskInfo> world_state;  // Current known tasks (global knowledge of all tasks)
+
+// NEW: My personal task queue (tasks I have committed to, in order)
+struct MyTaskInfo {
+    uint16_t id;
+    Point2d pos;
+    TaskType type;
+    double myBid;  // My cost for this task at the time of assignment
+};
+std::vector<MyTaskInfo> my_task_queue;  // Ordered list of tasks I'm committed to
+
+int current_task_id = -1;         // ID of the task I am currently trying to do (first in queue)
+double current_bid_val = 0.0;     // My cost for this task
+int last_completed_task_id = -1;  // ID of the last task I completed
 
 int lmsg, rmsg;  // Communication variables
 int indx;        // Event index to be sent to the supervisor
@@ -103,10 +113,18 @@ static WbDeviceTag ds[NB_SENSORS];  // Handle for the infrared distance sensors
 constexpr std::array<int, 16> Interconn = {17,  29,  34,  10, 8,  -38, -56, -76,
                                            -72, -58, -36, 8,  10, 36,  28,  18};
 
-// Helper to find task index in local vector
+// Helper to find task index in world_state
 int get_task_index(uint16_t task_id) {
     for (size_t i = 0; i < world_state.size(); ++i) {
         if (world_state[i].id == task_id) return i;
+    }
+    return -1;
+}
+
+// Helper to find task index in my_task_queue
+int get_my_queue_index(uint16_t task_id) {
+    for (size_t i = 0; i < my_task_queue.size(); ++i) {
+        if (my_task_queue[i].id == task_id) return i;
     }
     return -1;
 }
@@ -123,72 +141,185 @@ static int get_pause_duration_ms(RobotSpec robot_specialization, TaskType task_t
     }
 }
 
-void allocate_task() {
-    // 1. If I am already assigned a valid, incomplete task, check if I should keep it.
-    //    (Conflict resolution happens in receive_updates, so if I'm here, I'm good).
-    if (current_task_id != -1) {
-        int idx = get_task_index(current_task_id);
-        if (idx != -1 && !world_state[idx].isCompleted && world_state[idx].assignedRobotId == robot_id) {
-            // I own this task and it's not done. Keep going.
-            return;
-        }
-        // If task is done or stolen, reset:
-        current_task_id = -1;
-        target_valid = false;
-        waypoint_path.clear();
-        state = RobotState::STAY;
+// Calculate the insertion cost for adding a task at a specific position in my queue
+// Returns the MARGINAL cost (extra distance) of inserting at this position
+double calculate_insertion_cost(const Point2d& new_task_pos, int insert_idx) {
+    Point2d before_pos, after_pos;
+    bool has_after = false;
+
+    // Determine the "before" position
+    if (insert_idx == 0) {
+        // Inserting at start: before = my current position
+        before_pos = {my_pos[0], my_pos[1]};
+    } else {
+        // Inserting in middle/end: before = previous task in queue
+        before_pos = my_task_queue[insert_idx - 1].pos;
     }
 
-    // 2. Find the best unassigned task
+    // Determine the "after" position (if any)
+    if (insert_idx < (int)my_task_queue.size()) {
+        after_pos = my_task_queue[insert_idx].pos;
+        has_after = true;
+    }
+
+    // Calculate distances using pathfinding
+    Path p_before_to_new = planner.findPath(before_pos, new_task_pos);
+    double d_before_to_new = p_before_to_new.waypoints.empty() ? utils::dist(before_pos, new_task_pos)
+                                                               : p_before_to_new.totalDistance;
+
+    if (!has_after) {
+        // Appending to end: cost is simply distance from last task to new task
+        return d_before_to_new;
+    }
+
+    // Inserting in middle: cost = (before->new) + (new->after) - (before->after)
+    Path p_new_to_after = planner.findPath(new_task_pos, after_pos);
+    double d_new_to_after = p_new_to_after.waypoints.empty() ? utils::dist(new_task_pos, after_pos)
+                                                             : p_new_to_after.totalDistance;
+
+    Path p_before_to_after = planner.findPath(before_pos, after_pos);
+    double d_before_to_after = p_before_to_after.waypoints.empty() ? utils::dist(before_pos, after_pos)
+                                                                   : p_before_to_after.totalDistance;
+
+    return d_before_to_new + d_new_to_after - d_before_to_after;
+}
+
+// Find the best insertion position for a task and return {best_index, marginal_cost}
+std::pair<int, double> find_best_insertion(const Point2d& task_pos, TaskType task_type) {
     double best_cost = std::numeric_limits<double>::infinity();
-    int best_task_idx = -1;
+    int best_idx = 0;
+
+    if (my_task_queue.empty()) {
+        // Queue is empty: cost is simply path from me to the task
+        Path p = planner.findPath({my_pos[0], my_pos[1]}, task_pos);
+        double dist = p.waypoints.empty() ? utils::dist(my_pos[0], my_pos[1], task_pos.x, task_pos.y)
+                                          : p.totalDistance;
+        return {0, dist};
+    }
+
+    // Try inserting at every position (including end)
+    for (size_t i = 0; i <= my_task_queue.size(); ++i) {
+        double insertion_cost = calculate_insertion_cost(task_pos, i);
+        if (insertion_cost < best_cost) {
+            best_cost = insertion_cost;
+            best_idx = i;
+        }
+    }
+
+    return {best_idx, best_cost};
+}
+
+// Calculate the full bid value including time and battery considerations
+double calculate_full_bid(double marginal_distance, TaskType task_type) {
+    int time_at_task = get_pause_duration_ms(robot_specialization, task_type);
+    int time_to_travel = (marginal_distance / 0.5) * 1000 + 1000;  // Assuming 0.5 m/s + 1s overhead
+    int battery_left = MAX_BATTERY_LIFETIME - battery_time_used;
+
+    // Check if we have enough battery
+    if (time_to_travel + time_at_task > battery_left) {
+        return std::numeric_limits<double>::infinity();  // Can't accept this task
+    }
+
+    // Same formula as centralized
+    return 1.5 * time_to_travel + time_at_task - 0.01 * battery_left;
+}
+
+void allocate_task() {
+    // 1. Update current_task_id from the front of my queue
+    if (!my_task_queue.empty()) {
+        current_task_id = my_task_queue[0].id;
+        current_bid_val = my_task_queue[0].myBid;
+
+        // Check if this task is still valid
+        int idx = get_task_index(current_task_id);
+        if (idx == -1 || world_state[idx].isCompleted || world_state[idx].isBeingCompleted) {
+            // Task is done or being handled by someone else - remove from my queue
+            LOG("Task %d no longer valid, removing from queue\n", current_task_id);
+            my_task_queue.erase(my_task_queue.begin());
+            current_task_id = -1;
+            target_valid = false;
+            waypoint_path.clear();
+            // Recursively try next task
+            if (!my_task_queue.empty()) {
+                allocate_task();
+            }
+            return;
+        }
+
+        target_valid = true;
+        return;  // Already have a task to work on
+    }
+
+    // 2. No tasks in queue - look for the best unassigned task to claim
+    double best_bid = std::numeric_limits<double>::infinity();
+    int best_world_idx = -1;
+    int best_insert_idx = 0;
 
     for (size_t i = 0; i < world_state.size(); ++i) {
         // Skip completed or being-completed tasks
         if (world_state[i].isCompleted || world_state[i].isBeingCompleted) continue;
 
-        // Skip tasks assigned to OTHERS (respect their bid)
-        if (world_state[i].assignedRobotId != -1 && world_state[i].assignedRobotId != robot_id) continue;
+        // Skip tasks already in my queue
+        if (get_my_queue_index(world_state[i].id) != -1) continue;
 
-        // Calculate Cost (Distance/Path + Battery + Specialization)
-        // Note: Re-use your pathfinding/cost logic here!
-        Point2d start = {my_pos[0], my_pos[1]};
-        Path p = planner.findPath(start, world_state[i].pos);
+        // Calculate insertion cost using the new multi-step method
+        std::pair<int, double> insertion_result =
+            find_best_insertion(world_state[i].pos, world_state[i].type);
+        int insert_idx = insertion_result.first;
+        double marginal_dist = insertion_result.second;
+        double my_bid = calculate_full_bid(marginal_dist, world_state[i].type);
 
-        // If path failed, skip
-        if (p.waypoints.empty() && utils::dist(start, world_state[i].pos) > 0.05) continue;
+        // Skip if I can't afford this task (battery)
+        if (my_bid == std::numeric_limits<double>::infinity()) continue;
 
-        double dist = p.waypoints.empty() ? utils::dist(start, world_state[i].pos) : p.totalDistance;
+        // Skip if someone else has a better bid
+        if (world_state[i].assignedRobotId != -1 && world_state[i].assignedRobotId != robot_id &&
+            world_state[i].bestBidSeen <= my_bid) {
+            continue;
+        }
 
-        // Cost Function (Same as centralized for fairness)
-        int time_travel = (dist / 0.5) * 1000 + 1000;
-        int time_at_task = get_pause_duration_ms(robot_specialization, world_state[i].type);
-        int battery_left = MAX_BATTERY_LIFETIME - battery_time_used;
-
-        // Battery check
-        if (time_travel + time_at_task > battery_left) continue;
-
-        double cost = 1.5 * time_travel + time_at_task - 0.01 * battery_left;
-
-        if (cost < best_cost) {
-            best_cost = cost;
-            best_task_idx = i;
+        // This is a candidate - is it the best?
+        if (my_bid < best_bid) {
+            best_bid = my_bid;
+            best_world_idx = i;
+            best_insert_idx = insert_idx;
         }
     }
 
-    // 3. Assign myself
-    if (best_task_idx != -1) {
-        current_task_id = world_state[best_task_idx].id;
-        current_bid_val = best_cost;
+    // 3. Claim the best task found
+    if (best_world_idx != -1) {
+        LocalTaskInfo& task = world_state[best_world_idx];
 
-        // Update local belief
-        world_state[best_task_idx].assignedRobotId = robot_id;
-        world_state[best_task_idx].bestBidSeen = current_bid_val;
+        // Add to my queue at the best position
+        MyTaskInfo my_task;
+        my_task.id = task.id;
+        my_task.pos = task.pos;
+        my_task.type = task.type;
+        my_task.myBid = best_bid;
 
-        // Trigger movement
-        target_valid = true;
-        // Logic to start moving will happen in run() -> compute_path_to_target()
-        LOG("Self-allocated Task %d with cost %.2f\n", current_task_id, current_bid_val);
+        if (best_insert_idx >= (int)my_task_queue.size()) {
+            my_task_queue.push_back(my_task);
+        } else {
+            my_task_queue.insert(my_task_queue.begin() + best_insert_idx, my_task);
+        }
+
+        // Update world state belief
+        task.assignedRobotId = robot_id;
+        task.bestBidSeen = best_bid;
+
+        // Set current task if this is at the front
+        if (best_insert_idx == 0 || my_task_queue.size() == 1) {
+            current_task_id = task.id;
+            current_bid_val = best_bid;
+            target_valid = true;
+            waypoint_path.clear();  // Force re-computation of path
+        }
+
+        LOG("Self-allocated Task %d @(%.2f, %.2f) with bid %.2f at queue pos %d (queue size: %zu)\n",
+            task.id, task.pos.x, task.pos.y, best_bid, best_insert_idx, my_task_queue.size());
+    } else if (my_task_queue.empty()) {
+        current_task_id = -1;
+        target_valid = false;
     }
 }
 
@@ -240,14 +371,15 @@ static void receive_updates() {
                     info.bestBidSeen = 99999999.0;
                     world_state.push_back(info);
                 } else {
-                    // Task exists. If supervisor says it exists, it is NOT completed.
-                    // This handles re-spawned tasks or tasks we thought were done but weren't.
-                    if (world_state[idx].isCompleted) {
-                        // Edge case: Task ID reuse? Assuming unique IDs increment,
-                        // this shouldn't happen unless we missed a delete.
-                        LOG("Warning: Task %d @(%f, %f) re-appeared after being marked done. Possible ID "
-                            "reuse.\n",
-                            msg.eventId, world_state[idx].pos.x, world_state[idx].pos.y);
+                    // Task exists. Supervisor is the SOURCE OF TRUTH.
+                    // If supervisor says task exists, it is NOT completed (our local state was wrong,
+                    // likely because we heard about completion but supervisor didn't due to range).
+                    if (world_state[idx].isCompleted || world_state[idx].isBeingCompleted) {
+                        // Reset local belief - supervisor knows better
+                        world_state[idx].isCompleted = false;
+                        world_state[idx].isBeingCompleted = false;
+                        world_state[idx].assignedRobotId = -1;
+                        world_state[idx].bestBidSeen = 99999999.0;
                     }
                 }
             }
@@ -268,18 +400,34 @@ static void receive_updates() {
                         // Task is fully complete
                         world_state[idx].isCompleted = true;
                         world_state[idx].isBeingCompleted = false;
-                        if (current_task_id == msg.currentTaskId) {
-                            // Someone finished my task! Stop.
-                            current_task_id = -1;
-                            target_valid = false;
+
+                        // Remove from my queue if present
+                        int my_idx = get_my_queue_index(msg.currentTaskId);
+                        if (my_idx != -1) {
+                            LOG("Task %d completed by Robot %d, removing from my queue\n",
+                                msg.currentTaskId, msg.robotId);
+                            my_task_queue.erase(my_task_queue.begin() + my_idx);
+                            if (current_task_id == msg.currentTaskId) {
+                                current_task_id = -1;
+                                target_valid = false;
+                                waypoint_path.clear();
+                            }
                         }
                     } else if (msg.isTaskBeingCompleted) {
                         // Task is being worked on (robot arrived, working on it)
                         world_state[idx].isBeingCompleted = true;
-                        if (current_task_id == msg.currentTaskId) {
-                            // Someone is handling my task! Stop.
-                            current_task_id = -1;
-                            target_valid = false;
+
+                        // Remove from my queue if present
+                        int my_idx = get_my_queue_index(msg.currentTaskId);
+                        if (my_idx != -1) {
+                            LOG("Task %d being completed by Robot %d, removing from my queue\n",
+                                msg.currentTaskId, msg.robotId);
+                            my_task_queue.erase(my_task_queue.begin() + my_idx);
+                            if (current_task_id == msg.currentTaskId) {
+                                current_task_id = -1;
+                                target_valid = false;
+                                waypoint_path.clear();
+                            }
                         }
                     }
                     // 2. Conflict Resolution (only if not being worked on or completed)
@@ -289,14 +437,18 @@ static void receive_updates() {
                             world_state[idx].assignedRobotId = msg.robotId;
                             world_state[idx].bestBidSeen = msg.currentBid;
 
-                            // If *I* was targeting this, I must yield
-                            if (current_task_id == msg.currentTaskId) {
-                                LOG("Yielding Task %d @(%f, %f) to Robot %d (Bid %.2f vs %.2f)\n",
-                                    msg.currentTaskId, world_state[idx].pos.x, world_state[idx].pos.y,
-                                    msg.robotId, msg.currentBid, current_bid_val);
-                                current_task_id = -1;
-                                target_valid = false;
-                                // allocate_task() will run next loop and pick a new one
+                            // If I have this task in my queue, check if I should yield
+                            int my_idx = get_my_queue_index(msg.currentTaskId);
+                            if (my_idx != -1 && msg.currentBid < my_task_queue[my_idx].myBid) {
+                                LOG("Yielding Task %d to Robot %d (Bid %.2f vs my %.2f)\n",
+                                    msg.currentTaskId, msg.robotId, msg.currentBid,
+                                    my_task_queue[my_idx].myBid);
+                                my_task_queue.erase(my_task_queue.begin() + my_idx);
+                                if (current_task_id == msg.currentTaskId) {
+                                    current_task_id = -1;
+                                    target_valid = false;
+                                    waypoint_path.clear();
+                                }
                             }
                         }
                     }
@@ -305,25 +457,27 @@ static void receive_updates() {
         }
         wb_receiver_next_packet(receiver_tag);
     }
-    // 2. Broadcast My State (Heartbeat)
-    // We broadcast every time step. In a real system, we might do it less,
-    // but in simulation, it ensures rapid conflict resolution.
-    RobotStateMsg my_msg;
-    my_msg.msgType = ROBOT_MSG_STATE;
-    my_msg.robotId = robot_id;
-
+    // 2. Broadcast My State for ALL tasks in my queue (so neighbors know my bids)
+    // Broadcast "being completed" if paused
     if (pause_active && last_completed_task_id != -1) {
-        // I am currently "treating the victim". Tell neighbors the task is being worked on.
+        RobotStateMsg my_msg;
+        my_msg.msgType = ROBOT_MSG_STATE;
+        my_msg.robotId = robot_id;
         my_msg.currentTaskId = last_completed_task_id;
         my_msg.currentBid = 0.0;
         my_msg.isTaskBeingCompleted = true;
-        my_msg.isTaskComplete = false;  // Not yet complete, still working
+        my_msg.isTaskComplete = false;
         wb_emitter_set_channel(emitter_tag, WB_CHANNEL_BROADCAST);
         wb_emitter_send(emitter_tag, &my_msg, sizeof(my_msg));
-    } else if (current_task_id != -1) {
-        // I am moving toward a task. Tell neighbors my bid so they can yield.
-        my_msg.currentTaskId = current_task_id;
-        my_msg.currentBid = current_bid_val;
+    }
+
+    // Broadcast for all tasks in my queue (to claim them)
+    for (size_t i = 0; i < my_task_queue.size(); ++i) {
+        RobotStateMsg my_msg;
+        my_msg.msgType = ROBOT_MSG_STATE;
+        my_msg.robotId = robot_id;
+        my_msg.currentTaskId = my_task_queue[i].id;
+        my_msg.currentBid = my_task_queue[i].myBid;
         my_msg.isTaskBeingCompleted = false;
         my_msg.isTaskComplete = false;
         wb_emitter_set_channel(emitter_tag, WB_CHANNEL_BROADCAST);
@@ -362,6 +516,7 @@ void reset(void) {
     current_bid_val = 0.0;
     last_completed_task_id = -1;
     world_state.clear();
+    my_task_queue.clear();  // Clear the task queue
     waypoint_path.clear();
 
     // Start in the DEFAULT_STATE
@@ -573,23 +728,8 @@ void run(int ms) {
         allocate_task();
     }
 
-    // --- 4. BROADCAST HEARTBEAT ---
-    // We must tell neighbors what we are doing every step (or every N steps).
-    // This allows neighbors to know if they should yield to us.
-    if (current_task_id != -1) {
-        RobotStateMsg msg;
-        msg.msgType = ROBOT_MSG_STATE;
-        msg.robotId = robot_id;
-        msg.currentTaskId = current_task_id;
-        msg.currentBid = current_bid_val;
-        msg.isTaskBeingCompleted = false;
-        msg.isTaskComplete = false;
-
-        // Broadcast to everyone (Channel -1 is standard broadcast in Webots if not set otherwise,
-        // but here we use WB_CHANNEL_BROADCAST constant if defined, or -1)
-        wb_emitter_set_channel(emitter_tag, WB_CHANNEL_BROADCAST);
-        wb_emitter_send(emitter_tag, &msg, sizeof(msg));
-    }
+    // --- 4. BROADCAST HEARTBEAT (moved to receive_updates) ---
+    // Heartbeat is now broadcast at the end of receive_updates() to announce all queued tasks
 
     // --- 5. PAUSE LOGIC (WORKING ON TASK) ---
     if (pause_active) {
@@ -597,7 +737,7 @@ void run(int ms) {
             msl = 0;
             msr = 0;  // Stay still
         } else {
-            // Task is NOW actually complete - broadcast completion to supervisor
+            // Task is NOW actually complete - send completion to supervisor AND broadcast to neighbors
             if (last_completed_task_id != -1) {
                 RobotStateMsg done_msg;
                 done_msg.msgType = ROBOT_MSG_STATE;
@@ -606,8 +746,15 @@ void run(int ms) {
                 done_msg.currentBid = 0;
                 done_msg.isTaskBeingCompleted = false;
                 done_msg.isTaskComplete = true;  // NOW it's truly complete
+
+                // Send on DEDICATED channel to supervisor (guaranteed delivery regardless of emitter range)
+                wb_emitter_set_channel(emitter_tag, robot_id + 1);
+                wb_emitter_send(emitter_tag, &done_msg, sizeof(done_msg));
+
+                // Also broadcast to nearby neighbors
                 wb_emitter_set_channel(emitter_tag, WB_CHANNEL_BROADCAST);
                 wb_emitter_send(emitter_tag, &done_msg, sizeof(done_msg));
+
                 LOG("Task %d fully completed after working pause.\n", last_completed_task_id);
                 last_completed_task_id = -1;  // Reset after broadcasting
             }
@@ -703,11 +850,16 @@ void run(int ms) {
                             wb_emitter_set_channel(emitter_tag, WB_CHANNEL_BROADCAST);
                             wb_emitter_send(emitter_tag, &working_msg, sizeof(working_msg));
 
-                            // 6. Store task ID for completion broadcast after pause
+                            // 6. Store task ID for completion broadcast after pause, remove from queue
                             last_completed_task_id = current_task_id;
+                            int my_idx = get_my_queue_index(current_task_id);
+                            if (my_idx != -1) {
+                                my_task_queue.erase(my_task_queue.begin() + my_idx);
+                            }
                             current_task_id = -1;
                             waypoint_path.clear();
                             state = RobotState::STAY;
+                            LOG("Remaining queue size: %zu\n", my_task_queue.size());
                         }
                     } else {
                         // Move towards current waypoint

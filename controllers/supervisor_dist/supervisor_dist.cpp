@@ -274,8 +274,16 @@ class Supervisor {
         }
     }
 
+    // Track which robots are "working" on tasks (near task for required duration)
+    struct RobotWorkState {
+        int taskId = -1;           // Task robot is working on (-1 = none)
+        uint64_t arrivalTime = 0;  // When robot arrived at task
+        int requiredDuration = 0;  // How long robot needs to stay
+    };
+    RobotWorkState robotWorkStates_[NUM_ROBOTS];
+
     void markEventsDone() {
-        // Process incoming messages from robots
+        // METHOD 1: Process incoming messages from robots (if they're in range)
         while (wb_receiver_get_queue_length(receivers_[0]) > 0) {
             const void* data = wb_receiver_get_data(receivers_[0]);
             size_t size = wb_receiver_get_data_size(receivers_[0]);
@@ -315,6 +323,53 @@ class Supervisor {
                 }
             }
             wb_receiver_next_packet(receivers_[0]);
+        }
+
+        // METHOD 2: Proximity-based completion detection (backup for limited comm range)
+        // Check if any robot is near a task long enough to complete it
+        for (int robotId = 0; robotId < NUM_ROBOTS; ++robotId) {
+            Point2d robotPos = getRobotPos(robotId);
+            bool robotSpecA = (robotId <= 1);  // Robots 0,1 are A-specialists
+
+            for (auto& event : events_) {
+                if (event->isDone()) continue;
+
+                double dist = robotPos.distanceTo(event->pos_);
+
+                if (dist < EVENT_RANGE) {
+                    // Robot is at the task location
+                    if (robotWorkStates_[robotId].taskId != event->id_) {
+                        // Just arrived at this task
+                        robotWorkStates_[robotId].taskId = event->id_;
+                        robotWorkStates_[robotId].arrivalTime = clock_;
+                        // Calculate required duration based on specialization
+                        if (event->type_ == TASK_TYPE_A) {
+                            robotWorkStates_[robotId].requiredDuration = robotSpecA ? 3000 : 9000;
+                        } else {
+                            robotWorkStates_[robotId].requiredDuration = robotSpecA ? 5000 : 1000;
+                        }
+                    } else {
+                        // Still at the same task - check if duration met
+                        uint64_t timeAtTask = clock_ - robotWorkStates_[robotId].arrivalTime;
+                        if (timeAtTask >= (uint64_t)robotWorkStates_[robotId].requiredDuration) {
+                            // Task completed via proximity detection!
+                            LOG("Robot %d completed Task %d via proximity detection (at task for %llums)\n",
+                                robotId, event->id_, (unsigned long long)timeAtTask);
+
+                            robotBatteryUsed[robotId] += robotWorkStates_[robotId].requiredDuration;
+                            numEventsHandled++;
+                            event->markDone(clock_, robotId);
+                            numActiveEvents_--;
+                            robotWorkStates_[robotId].taskId = -1;  // Reset
+                        }
+                    }
+                } else {
+                    // Robot moved away from task
+                    if (robotWorkStates_[robotId].taskId == event->id_) {
+                        robotWorkStates_[robotId].taskId = -1;
+                    }
+                }
+            }
         }
     }
 
@@ -393,6 +448,13 @@ class Supervisor {
 
         // Init wall proximity times
         for (int i = 0; i < NUM_ROBOTS; ++i) proximityWallTime_[i] = 0.0;
+
+        // Init robot work states (for proximity-based completion detection)
+        for (int i = 0; i < NUM_ROBOTS; ++i) {
+            robotWorkStates_[i].taskId = -1;
+            robotWorkStates_[i].arrivalTime = 0;
+            robotWorkStates_[i].requiredDuration = 0;
+        }
         proximityAnyTime_ = 0.0;
 
         // Add the first few events
