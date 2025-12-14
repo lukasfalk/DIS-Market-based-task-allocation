@@ -5,22 +5,23 @@ import matplotlib.pyplot as plt
 # ==========================================
 # 1. CONFIGURATION & CALIBRATION
 # ==========================================
-DT = 0.1 
+DT = 0.064
 
 # --- MOVEMENT & WORK ---
-AVG_TRAVEL_TIME = 4.5+1.82 # Sum of travel, obstacle avoid, and average work times 
+AVG_TRAVEL_TIME = 15
+#4.65+1.64 # Sum of travel, obstacle avoid, and average work times 
 TIME_ROBOTA = 3  
 TIME_ROBOTB = 1   
 
 # --- BIDDING MECHANISM ---
-TIME_IDLE_PER_TASK=6.83
+TIME_IDLE_PER_TASK=7.27
 
 #calculate the probability to end up as the time idle per task, given dt
 BID_PROBABILITY = DT / TIME_IDLE_PER_TASK
 
 # --- BATTERY CONSTRAINTS ---
 # "it can move or complete a task only for 2 minutes"
-MAX_BATTERY_LIFE = 180.0 
+MAX_BATTERY_LIFE = 120 
 
 # Project Constraints
 NUM_ROBOTS = 5
@@ -172,7 +173,7 @@ def main():
     
     mean_dead = np.mean(all_dead, axis=0)
     
-    time_axis = np.arange(0, SIM_DURATION, DT)
+    time_axis = np.linspace(0, SIM_DURATION, steps)
 
     # ==========================================
     # 5. PLOTTING

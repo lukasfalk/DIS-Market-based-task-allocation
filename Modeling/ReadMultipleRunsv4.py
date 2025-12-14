@@ -192,32 +192,37 @@ for arr in all_completed_arrays:
 mean_active = np.mean(padded_active, axis=0)
 mean_completed = np.mean(padded_completed, axis=0)
 std_active = np.std(padded_active, axis=0)
+std_completed = np.std(padded_completed, axis=0)
 
 # Apply moving average to smooth the active robots curve
 window_size = 20  # Adjust this value to control smoothing (higher = smoother)
 mean_active_smooth = np.convolve(mean_active, np.ones(window_size) / window_size, mode='same')
 
 # 7. Generate Plots (V1 style)
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10), sharex=True)
+fig, ax1 = plt.subplots(figsize=(10, 6))
 
-# Plot 1: Active Robots
+# Plot 1: Active Robots (left y-axis)
 ax1.plot(common_time_axis / 1000, mean_active_smooth, label='Avg Active Robots (Smoothed)', color='blue', linewidth=2)
-ax1.axhline(y=expected_robot_count, color='red', linestyle='--', label='Max Robots', alpha=0.5)
-ax1.fill_between(common_time_axis / 1000, mean_active_smooth - std_active, mean_active_smooth + std_active, color='blue', alpha=0.1, label='Std Dev')
-ax1.set_ylabel('Active Robots')
-ax1.set_title(f'Metric 1: Average Active Robots (over {len(filenames)} runs)')
-ax1.legend(loc='lower right')
-ax1.grid(True, alpha=0.3)
+ax1.fill_between(common_time_axis / 1000, mean_active_smooth - std_active, mean_active_smooth + std_active, color='blue', alpha=0.1, label='Std Dev (Active)')
+ax1.set_xlabel('Time (s)')
+ax1.set_ylabel('Active Robots', color='blue')
+ax1.tick_params(axis='y', labelcolor='blue')
 ax1.set_ylim(0, expected_robot_count + 0.5)
+ax1.grid(True, alpha=0.3)
 
-# Plot 2: Completed Tasks
+# Plot 2: Completed Tasks (right y-axis)
+ax2 = ax1.twinx()
 ax2.plot(common_time_axis / 1000, mean_completed, label='Avg Completed Tasks', color='green', linewidth=2)
-ax2.fill_between(common_time_axis / 1000, mean_completed, color='green', alpha=0.1)
-ax2.set_xlabel('Time (s)')
-ax2.set_ylabel('Total Completed Tasks')
-ax2.set_title('Metric 2: Average Cumulative Tasks Completed')
-ax2.legend(loc='lower right')
-ax2.grid(True, alpha=0.3)
+ax2.fill_between(common_time_axis / 1000, mean_completed - std_completed, mean_completed + std_completed, color='green', alpha=0.1, label='Std Dev (Tasks)')
+ax2.set_ylabel('Total Completed Tasks', color='green')
+ax2.set_ylim(0, 75)
+ax2.tick_params(axis='y', labelcolor='green')
 
+# Combined legend
+lines1, labels1 = ax1.get_legend_handles_labels()
+lines2, labels2 = ax2.get_legend_handles_labels()
+ax1.legend(lines1 + lines2, labels1 + labels2, loc='lower center')
+
+plt.title(f'Active Robots & Cumulative Tasks Completed (over {len(filenames)} runs)')
 plt.tight_layout()
 plt.show()

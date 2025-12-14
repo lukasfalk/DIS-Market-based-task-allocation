@@ -5,7 +5,7 @@ import random
 # ==========================================
 # 1. UNIFIED CONFIGURATION
 # ==========================================
-DT = 0.1
+DT = 0.064 # same timestep as webots
 SIM_DURATION = 180.0
 NUM_RUNS = 50  # Number of Monte Carlo runs for Micro model
 
@@ -15,11 +15,11 @@ NUM_ROBOTA = 2
 NUM_ROBOTB = 3
 
 # Times (Microscopic definitions)
-AVG_TRAVEL_TIME = 4.52
+AVG_TRAVEL_TIME = 4.65
 TIME_ROBOTA = 3
 TIME_ROBOTB = 1
-TIME_OBSTACLE_AVOID = 1.82 
-TIME_IDLE_PER_TASK = 6.83
+TIME_OBSTACLE_AVOID = 1.64 
+TIME_IDLE_PER_TASK = 7.27
 
 # Probability (Microscopic definition)
 BID_PROBABILITY = DT / (TIME_IDLE_PER_TASK)  # Based on average idle time per task
@@ -37,7 +37,7 @@ P_BID_WON = BID_PROBABILITY
 # Weighted average based on the population of Robot A vs Robot B
 avg_work_time = ((NUM_ROBOTA * TIME_ROBOTA) + (NUM_ROBOTB * TIME_ROBOTB)) / NUM_ROBOTS
 
-# 3. Total Active Duration (Average)
+# 3. Total Active Duration (Average used for macroscopic model)
 # T_active = T_travel + T_work + T_obstacle_avoid
 total_active_duration = AVG_TRAVEL_TIME + avg_work_time + TIME_OBSTACLE_AVOID
 
@@ -64,8 +64,8 @@ class Robot:
         """Returns True if a task was just finished."""
         task_finished = False
         
-        # IDLE -> ACTIVE (Stochastic)
-        if self.state == 0:
+        # IDLE STATE (Stochastic)
+        if self.state == 0: 
             if random.random() < BID_PROBABILITY:
                 self.start_active()
         
@@ -81,7 +81,7 @@ class Robot:
     def start_active(self):
         self.state = 1
         # Add noise to travel time (Micro-only feature)
-        travel_time = np.random.normal(AVG_TRAVEL_TIME, 2.0)
+        travel_time = np.random.normal(AVG_TRAVEL_TIME, 0.0)
         if travel_time < 0: travel_time = 0
         self.timer = travel_time + self.work_duration + TIME_OBSTACLE_AVOID
 
@@ -180,42 +180,43 @@ def main():
     macro_active, macro_tasks = run_macroscopic()
 
     # --- C. Plotting ---
-    time_axis = np.arange(0, SIM_DURATION, DT)
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10), sharex=True)
+    time_axis = np.linspace(0, SIM_DURATION, steps)
+    fig, ax1 = plt.subplots(figsize=(10, 6))
 
-    # Plot 1: Active Robots Comparison
-    ax1.plot(time_axis, micro_mean_active, label='Micro Mean', color='blue', linewidth=2)
-    # Shaded area for Standard Deviation
+    # Plot 1: Active Robots (left y-axis)
+    ax1.plot(time_axis, micro_mean_active, label='Micro Mean (Active)', color='blue', linewidth=2)
     ax1.fill_between(time_axis, 
                      micro_mean_active - micro_std_active, 
                      micro_mean_active + micro_std_active, 
-                     color='blue', alpha=0.1, label='Micro StdDev')
+                     color='blue', alpha=0.1, label='Micro StdDev (Active)')
+    ax1.plot(time_axis, macro_active, label='Macro Model (Active)', color='red', linestyle='--', linewidth=2.5)
     
-    # Dashed Red Line for Macro
-    ax1.plot(time_axis, macro_active, label='Macro Model', color='red', linestyle='--', linewidth=2.5)
-    
-    ax1.set_ylabel('Number of Active Robots')
-    ax1.set_title('Comparison: Active Robots (Micro vs Macro)')
-    ax1.legend(loc='lower right')
-    ax1.grid(True, alpha=0.3)
+    ax1.set_xlabel('Time (s)')
+    ax1.set_ylabel('Active Robots', color='blue')
+    ax1.tick_params(axis='y', labelcolor='blue')
     ax1.set_ylim(0, NUM_ROBOTS + 0.5)
+    ax1.grid(True, alpha=0.3)
 
-    # Plot 2: Completed Tasks Comparison
-    ax2.plot(time_axis, micro_mean_tasks, label='Micro Mean', color='green', linewidth=2)
+    # Plot 2: Completed Tasks (right y-axis)
+    ax2 = ax1.twinx()
+    ax2.plot(time_axis, micro_mean_tasks, label='Micro Mean (Tasks)', color='green', linewidth=2)
     ax2.fill_between(time_axis, 
                      micro_mean_tasks - micro_std_tasks, 
                      micro_mean_tasks + micro_std_tasks, 
-                     color='green', alpha=0.1, label='Micro StdDev')
+                     color='green', alpha=0.1, label='Micro StdDev (Tasks)')
+    ax2.plot(time_axis, macro_tasks, label='Macro Model (Tasks)', color='orange', linestyle='--', linewidth=2.5)
     
-    # Dashed Orange Line for Macro
-    ax2.plot(time_axis, macro_tasks, label='Macro Model', color='orange', linestyle='--', linewidth=2.5)
-    
-    ax2.set_xlabel('Time (s)')
-    ax2.set_ylabel('Total Completed Tasks')
-    ax2.set_title('Comparison: Cumulative Tasks Completed')
-    ax2.legend(loc='lower right')
-    ax2.grid(True, alpha=0.3)
+    ax2.set_ylabel('Total Completed Tasks', color='green')
+    ax2.set_ylim(0, 75)
 
+    ax2.tick_params(axis='y', labelcolor='green')
+
+    # Combined legend
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc='lower right')
+
+    plt.title('Active Robots & Cumulative Tasks Completed (Micro vs Macro)')
     plt.tight_layout()
     plt.show()
 
