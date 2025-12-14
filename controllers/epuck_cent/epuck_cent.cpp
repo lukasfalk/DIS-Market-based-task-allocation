@@ -66,12 +66,12 @@ RobotState state;                // State of the robot
 double my_pos[3];                // X, Z, Theta of this robot
 bool target_valid = false;       // boolean; whether we are supposed to go to the target
 
-struct Target {
+struct LocalTaskInfo {
     double x;
     double y;
     int id;
 };
-std::vector<Target> targets;
+std::vector<LocalTaskInfo> world_state;
 
 int lmsg, rmsg;  // Communication variables
 int indx;        // Event index to be sent to the supervisor
@@ -133,7 +133,7 @@ static void receive_updates() {
             exit(1);
         }
 
-        if (targets.empty()) target_valid = false;
+        if (world_state.empty()) target_valid = false;
 
         // Event state machine
         if (msg.msgType == MSG_GPS_ONLY) {
@@ -157,12 +157,12 @@ static void receive_updates() {
         } else if (msg.msgType == MSG_EVENT_DONE) {
             // If event is done, delete it from vector
             auto it = std::remove_if(targets.begin(), targets.end(),
-                                     [&](const Target& t) { return t.id == msg.eventId; });
+                                     [&](const LocalTaskInfo& t) { return t.id == msg.eventId; });
             if (it != targets.end()) {
-                targets.erase(it, targets.end());
+                world_state.erase(it, targets.end());
             }
 
-            if (targets.empty()) target_valid = false;
+            if (world_state.empty()) target_valid = false;
 
             // Stop and pause based on robot type and event type
             wb_motor_set_velocity(left_motor, 0.0);
@@ -195,11 +195,11 @@ static void receive_updates() {
             // Insert event at index
             LOG("Won bid for task %d, adding to list of tasks at index %d\n", msg.eventId, msg.eventIndex);
 
-            Target new_target = {msg.eventX, msg.eventY, msg.eventId};
+            LocalTaskInfo new_target = {msg.eventX, msg.eventY, msg.eventId};
             if (msg.eventIndex >= 0 && msg.eventIndex <= (int)targets.size()) {
-                targets.insert(targets.begin() + msg.eventIndex, new_target);
+                world_state.insert(targets.begin() + msg.eventIndex, new_target);
             } else {
-                targets.push_back(new_target);
+                world_state.push_back(new_target);
             }
 
             target_valid = true;
@@ -211,7 +211,7 @@ static void receive_updates() {
             int whereInsert = -1;
 
             // --- INITIALIZATION FIX ---
-            if (targets.empty()) {
+            if (world_state.empty()) {
                 // Case 0: List is empty. Cost is simply path from Me -> Event
                 Point2d start = {my_pos[0], my_pos[1]};
                 Point2d goal = {msg.eventX, msg.eventY};
@@ -226,7 +226,7 @@ static void receive_updates() {
                 d = 100000000.0;
 
                 // Iterate through every existing task to find the best insertion slot
-                for (size_t i = 0; i < targets.size(); i++) {
+                for (size_t i = 0; i < world_state.size(); i++) {
                     double current_insertion_cost = 0;
 
                     // --- CASE 1: Insertion at the START ---
@@ -344,7 +344,7 @@ static void receive_updates() {
         buff.push_back(targets[0].y);
 
         // Lines between targets
-        for (size_t k = 1; k < targets.size(); ++k) {
+        for (size_t k = 1; k < world_state.size(); ++k) {
             buff.push_back(BREAK);
             buff.push_back(targets[k - 1].x);
             buff.push_back(targets[k - 1].y);
@@ -385,7 +385,7 @@ void reset(void) {
     travel_start_time = 0;
 
     // Init target positions
-    targets.clear();
+    world_state.clear();
     waypoint_path.clear();
 
     // Start in the DEFAULT_STATE

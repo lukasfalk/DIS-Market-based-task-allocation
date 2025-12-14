@@ -36,13 +36,13 @@ struct MessageT {
     MessageType msgType;
 
     // Event details (valid if type is related to an event)
-    uint16_t eventId;
-    TaskType taskType;
-    double eventX;
-    double eventY;
+    uint16_t eventId = -1;
+    TaskType taskType = TASK_TYPE_INVALID;
+    double eventX = 0.0;
+    double eventY = 0.0;
 
     // Index suggestion for task list
-    int eventIndex;
+    int eventIndex = -1;
 };
 
 // Message sent from Robot -> Supervisor
@@ -51,6 +51,14 @@ struct BidT {
     uint16_t eventId;
     double bidValue;  // Estimated cost/time
     int eventIndex;   // Where the robot plans to insert the task
+};
+
+struct RobotStateMsg {
+    uint16_t robotId;
+    uint16_t currentTaskId;  // ID of the task I am currently trying to do
+    double currentBid;       // My cost for this task
+    bool isTaskComplete;     // True if I just finished this task
+    // Optional TODO: Add a hop-count if implementing multi-hop relay
 };
 
 #endif  // COMMUNICATION_HPP
