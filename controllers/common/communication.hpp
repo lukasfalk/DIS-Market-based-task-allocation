@@ -55,9 +55,10 @@ struct BidT {
 
 struct RobotStateMsg {
     uint16_t robotId;
-    uint16_t currentTaskId;  // ID of the task I am currently trying to do
-    double currentBid;       // My cost for this task
-    bool isTaskComplete;     // True if I just finished this task
+    uint16_t currentTaskId;     // ID of the task I am currently trying to do
+    double currentBid;          // My cost for this task
+    bool isTaskBeingCompleted;  // True if I have arrived at the task and am working on it
+    bool isTaskComplete;        // True if I just finished this task
     // Optional TODO: Add a hop-count if implementing multi-hop relay
 };
 

@@ -1,5 +1,5 @@
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
- * file:        supervisor_dist.cc
+ * file:        supervisor_dist.cpp
  * description: Supervisor for Part 2 (Distributed).
  *              Acts as Environment Manager and Stats Collector only.
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
@@ -59,10 +59,13 @@ vector<WbNodeRef> g_eventNodesFree;
 
 Point2d randCoord() {
     // Sample uniformly within the arena bounds defined by the pathfinding graph
-    // Arena bounds: x in [-0.575, 0.575], y in [-0.575, 0.575]
-    // Excludes points inside interior walls
-    const double ARENA_MIN = -0.575;
-    const double ARENA_MAX = 0.575;
+    // Visibilty graph x in [-0.58, 0.58], y in [-0.58, 0.58]
+    // Use a padding of 0.01 to avoid spawning exactly on walls
+    double padding = 0.02;
+    const double ARENA_MIN = -0.58 + padding;
+    const double ARENA_MAX = 0.58 - padding;
+    // => Spawn bounds: x in [-0.57, 0.57], y in [-0.57, 0.57]
+    // ^ for outer walls - interior walls are handled by rejection sampling below, with same padding
 
     Point2d candidate;
     int attempts = 0;
@@ -70,7 +73,7 @@ Point2d randCoord() {
         candidate.x = ARENA_MIN + (ARENA_MAX - ARENA_MIN) * utils::random_01();
         candidate.y = ARENA_MIN + (ARENA_MAX - ARENA_MIN) * utils::random_01();
         attempts++;
-    } while (MapConfig::isPointInInteriorWall(candidate));
+    } while (MapConfig::isPointInInteriorWall(candidate, padding));
 
     return candidate;
 }
@@ -271,37 +274,41 @@ class Supervisor {
         }
     }
 
-    // Marks one event as done, if one of the robots is within the range
     void markEventsDone() {
-        for (auto& event : events_) {
-            if (event->isDone()) continue;
+        // Process incoming messages from robots
+        while (wb_receiver_get_queue_length(receivers_[0]) > 0) {
+            const void* data = wb_receiver_get_data(receivers_[0]);
+            size_t size = wb_receiver_get_data_size(receivers_[0]);
 
-            // Check if ANY robot is within range of the event
-            for (int r = 0; r < NUM_ROBOTS; r++) {
-                Point2d currentRobotPos = getRobotPos(r);
+            if (size == sizeof(RobotStateMsg)) {
+                RobotStateMsg msg;
+                memcpy(&msg, data, sizeof(RobotStateMsg));
 
-                if (event->pos_.distanceTo(currentRobotPos) <= EVENT_RANGE) {
-                    LOG("Robot %d reached event %d\n", r, event->id_);
+                if (msg.isTaskComplete) {
+                    // Find the event
+                    for (auto& event : events_) {
+                        if (event->id_ == msg.currentTaskId && !event->isDone()) {
+                            LOG("Robot %d reported completion of Task %d.\n", msg.robotId,
+                                msg.currentTaskId);
 
-                    // Calculate battery usage for time spent at the task completing it
-                    int timeAtTask = 0;
-                    if (r <= 1) {  // A-specialist (robots 0, 1)
-                        timeAtTask = (event->type_ == TASK_TYPE_A) ? 3000 : 5000;
-                    } else {  // B-specialist (robots 2, 3, 4)
-                        timeAtTask = (event->type_ == TASK_TYPE_A) ? 9000 : 1000;
+                            // Calculate battery usage for time spent at the task completing it
+                            int timeAtTask = 0;
+                            if (msg.robotId <= 1) {  // A-specialist (robots 0, 1)
+                                timeAtTask = (event->type_ == TASK_TYPE_A) ? 3000 : 5000;
+                            } else {  // B-specialist (robots 2, 3, 4)
+                                timeAtTask = (event->type_ == TASK_TYPE_A) ? 9000 : 1000;
+                            }
+                            robotBatteryUsed[msg.robotId] += timeAtTask;
+
+                            numEventsHandled++;
+                            event->markDone(clock_, msg.robotId);
+                            numActiveEvents_--;
+                            break;
+                        }
                     }
-                    robotBatteryUsed[r] += timeAtTask;
-
-                    numEventsHandled++;
-                    event->markDone(clock_, r);
-                    numActiveEvents_--;
-
-                    // NOTE: In distributed case, we don't inform robots who won the event anymore
-                    // eventQueue.emplace_back(event.get(), MSG_EVENT_DONE);
-
-                    break;  // Done (no need to check other robots), move to next event
                 }
             }
+            wb_receiver_next_packet(receivers_[0]);
         }
     }
 
@@ -400,6 +407,15 @@ class Supervisor {
         if (!emitter_) {
             LOG("Missing supervisor emitter!\n");
             exit(1);
+        }
+
+        // Initialize receiver to listen to robot broadcasts
+        receivers_[0] = wb_robot_get_device("rec0");
+        if (receivers_[0]) {
+            wb_receiver_enable(receivers_[0], TIME_STEP);
+            wb_receiver_set_channel(receivers_[0], WB_CHANNEL_BROADCAST);
+        } else {
+            LOG("Missing supervisor receiver rec0!\n");
         }
     }
 

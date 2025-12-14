@@ -24,18 +24,18 @@ namespace MapConfig {
 */
 
 static const std::vector<GraphNode> nodes = {
-    {'A', {-0.575, 0.575}},   // 0
-    {'B', {0.07, 0.575}},     // 1
-    {'C', {0.18, 0.575}},     // 2
-    {'D', {0.575, 0.575}},    // 3
-    {'E', {-0.575, 0.055}},   // 4
-    {'F', {-0.215, 0.055}},   // 5
-    {'G', {-0.575, -0.055}},  // 6
-    {'H', {-0.215, -0.055}},  // 7
-    {'I', {0.07, -0.25}},     // 8
-    {'J', {0.18, -0.25}},     // 9
-    {'K', {-0.575, -0.575}},  // 10
-    {'L', {0.575, -0.575}}    // 11
+    {'A', {-0.58, 0.58}},    // 0
+    {'B', {0.075, 0.58}},    // 1
+    {'C', {0.175, 0.58}},    // 2
+    {'D', {0.58, 0.58}},     // 3
+    {'E', {-0.58, 0.05}},    // 4
+    {'F', {-0.215, 0.05}},   // 5
+    {'G', {-0.58, -0.05}},   // 6
+    {'H', {-0.215, -0.05}},  // 7
+    {'I', {0.075, -0.25}},   // 8
+    {'J', {0.175, -0.25}},   // 9
+    {'K', {-0.58, -0.58}},   // 10
+    {'L', {0.58, -0.58}}     // 11
 };
 
 // --- Wall Definitions ---
@@ -64,16 +64,20 @@ static const std::vector<LineSegment> walls = {
      {(nodes[5].pos.x + nodes[7].pos.x) / 2.0 - 0.01, (nodes[5].pos.y + nodes[7].pos.y) / 2.0}}};
 
 // --- Utility: Check if point is inside an obstacle ---
-inline bool isPointInInteriorWall(const Point2d& p) {
+inline bool isPointInInteriorWall(const Point2d& p, double padding = 0.0) {
     // Vertical wall BIJC bounds
-    const double BIJC_X_MIN = 0.07, BIJC_X_MAX = 0.18;
-    const double BIJC_Y_MIN = -0.25, BIJC_Y_MAX = 0.575;
+    const double BIJC_X_MIN = nodes[1].pos.x - padding;  // Use B.x
+    const double BIJC_X_MAX = nodes[2].pos.x + padding;  // Use C.x
+    const double BIJC_Y_MIN = nodes[8].pos.y - padding;  // Use J.y
+    const double BIJC_Y_MAX = nodes[1].pos.y + padding;  // Use B.y
 
     bool in_bijc = (p.x >= BIJC_X_MIN && p.x <= BIJC_X_MAX && p.y >= BIJC_Y_MIN && p.y <= BIJC_Y_MAX);
 
     // Horizontal wall EFHG bounds
-    const double EFHG_X_MIN = -0.575, EFHG_X_MAX = -0.215;
-    const double EFHG_Y_MIN = -0.055, EFHG_Y_MAX = 0.055;
+    const double EFHG_X_MIN = nodes[4].pos.x - padding;  // Use E.x
+    const double EFHG_X_MAX = nodes[5].pos.x + padding;  // Use F.x
+    const double EFHG_Y_MIN = nodes[7].pos.y - padding;  // Use H.y
+    const double EFHG_Y_MAX = nodes[5].pos.y + padding;  // Use F.y
 
     bool in_efhg = (p.x >= EFHG_X_MIN && p.x <= EFHG_X_MAX && p.y >= EFHG_Y_MIN && p.y <= EFHG_Y_MAX);
 

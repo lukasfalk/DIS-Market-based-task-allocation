@@ -61,9 +61,10 @@ struct LocalTaskInfo {
     Point2d pos;
     TaskType type;
 
-    bool isCompleted;     // Do I believe this task is done?
-    int assignedRobotId;  // Who do I think is doing this? (-1 if free)
-    double bestBidSeen;   // The best bid I've heard for this task (from assignedRobotId)
+    bool isBeingCompleted;  // Do I believe someone is working on this task?
+    bool isCompleted;       // Do I believe this task is done?
+    int assignedRobotId;    // Who do I think is doing this? (-1 if free)
+    double bestBidSeen;     // The best bid I've heard for this task (from assignedRobotId)
 
     int lastUpdateTimestamp;  // For cleaning up stale assignments (optional but good for robustness)
 };
@@ -143,8 +144,8 @@ void allocate_task() {
     int best_task_idx = -1;
 
     for (size_t i = 0; i < world_state.size(); ++i) {
-        // Skip completed tasks
-        if (world_state[i].isCompleted) continue;
+        // Skip completed or being-completed tasks
+        if (world_state[i].isCompleted || world_state[i].isBeingCompleted) continue;
 
         // Skip tasks assigned to OTHERS (respect their bid)
         if (world_state[i].assignedRobotId != -1 && world_state[i].assignedRobotId != robot_id) continue;
@@ -235,6 +236,7 @@ static void receive_updates() {
                     info.id = msg.eventId;
                     info.pos = {msg.eventX, msg.eventY};
                     info.type = msg.taskType;
+                    info.isBeingCompleted = false;
                     info.isCompleted = false;
                     info.assignedRobotId = -1;
                     info.bestBidSeen = 99999999.0;
@@ -245,8 +247,9 @@ static void receive_updates() {
                     if (world_state[idx].isCompleted) {
                         // Edge case: Task ID reuse? Assuming unique IDs increment,
                         // this shouldn't happen unless we missed a delete.
-                        LOG("Warning: Task %d re-appeared after being marked done. Possible ID reuse.\n",
-                            msg.eventId);
+                        LOG("Warning: Task %d @(%f, %f) re-appeared after being marked done. Possible ID "
+                            "reuse.\n",
+                            msg.eventId, world_state[idx].pos.x, world_state[idx].pos.y);
                     }
                 }
             }
@@ -260,15 +263,25 @@ static void receive_updates() {
             if (idx != -1) {
                 // 1. Update completion status
                 if (msg.isTaskComplete) {
+                    // Task is fully complete
                     world_state[idx].isCompleted = true;
+                    world_state[idx].isBeingCompleted = false;
                     if (current_task_id == msg.currentTaskId) {
                         // Someone finished my task! Stop.
                         current_task_id = -1;
                         target_valid = false;
                     }
+                } else if (msg.isTaskBeingCompleted) {
+                    // Task is being worked on (robot arrived, working on it)
+                    world_state[idx].isBeingCompleted = true;
+                    if (current_task_id == msg.currentTaskId) {
+                        // Someone is handling my task! Stop.
+                        current_task_id = -1;
+                        target_valid = false;
+                    }
                 }
-                // 2. Conflict Resolution
-                else if (!world_state[idx].isCompleted) {
+                // 2. Conflict Resolution (only if not being worked on or completed)
+                else if (!world_state[idx].isCompleted && !world_state[idx].isBeingCompleted) {
                     // If neighbor claims this task with a BETTER bid
                     if (msg.currentBid < world_state[idx].bestBidSeen) {
                         world_state[idx].assignedRobotId = msg.robotId;
@@ -276,7 +289,8 @@ static void receive_updates() {
 
                         // If *I* was targeting this, I must yield
                         if (current_task_id == msg.currentTaskId) {
-                            LOG("Yielding Task %d to Robot %d (Bid %.2f vs %.2f)\n", msg.currentTaskId,
+                            LOG("Yielding Task %d @(%f, %f) to Robot %d (Bid %.2f vs %.2f)\n",
+                                msg.currentTaskId, world_state[idx].pos.x, world_state[idx].pos.y,
                                 msg.robotId, msg.currentBid, current_bid_val);
                             current_task_id = -1;
                             target_valid = false;
@@ -295,16 +309,18 @@ static void receive_updates() {
     my_msg.robotId = robot_id;
 
     if (pause_active && last_completed_task_id != -1) {
-        // I am currently "treating the victim". Tell neighbors the task is done.
+        // I am currently "treating the victim". Tell neighbors the task is being worked on.
         my_msg.currentTaskId = last_completed_task_id;
         my_msg.currentBid = 0.0;
-        my_msg.isTaskComplete = true;
+        my_msg.isTaskBeingCompleted = true;
+        my_msg.isTaskComplete = false;  // Not yet complete, still working
         wb_emitter_set_channel(emitter_tag, WB_CHANNEL_BROADCAST);
         wb_emitter_send(emitter_tag, &my_msg, sizeof(my_msg));
     } else if (current_task_id != -1) {
         // I am moving toward a task. Tell neighbors my bid so they can yield.
         my_msg.currentTaskId = current_task_id;
         my_msg.currentBid = current_bid_val;
+        my_msg.isTaskBeingCompleted = false;
         my_msg.isTaskComplete = false;
         wb_emitter_set_channel(emitter_tag, WB_CHANNEL_BROADCAST);
         wb_emitter_send(emitter_tag, &my_msg, sizeof(my_msg));
@@ -353,6 +369,7 @@ void reset(void) {
     int tmp_id;
     if (sscanf(robot_name, "e-puck%d", &tmp_id)) {
         robot_id = (uint16_t)tmp_id;
+        LOG("Initialized. My name is %s\n", robot_name);
     } else {
         fprintf(stderr, "ERROR: couldn't parse my id %s \n", robot_name);
         exit(1);
@@ -560,6 +577,7 @@ void run(int ms) {
         msg.robotId = robot_id;
         msg.currentTaskId = current_task_id;
         msg.currentBid = current_bid_val;
+        msg.isTaskBeingCompleted = false;
         msg.isTaskComplete = false;
 
         // Broadcast to everyone (Channel -1 is standard broadcast in Webots if not set otherwise,
@@ -574,6 +592,19 @@ void run(int ms) {
             msl = 0;
             msr = 0;  // Stay still
         } else {
+            // Task is NOW actually complete - broadcast completion to supervisor
+            if (last_completed_task_id != -1) {
+                RobotStateMsg done_msg;
+                done_msg.robotId = robot_id;
+                done_msg.currentTaskId = last_completed_task_id;
+                done_msg.currentBid = 0;
+                done_msg.isTaskBeingCompleted = false;
+                done_msg.isTaskComplete = true;  // NOW it's truly complete
+                wb_emitter_set_channel(emitter_tag, WB_CHANNEL_BROADCAST);
+                wb_emitter_send(emitter_tag, &done_msg, sizeof(done_msg));
+                LOG("Task %d fully completed after working pause.\n", last_completed_task_id);
+                last_completed_task_id = -1;  // Reset after broadcasting
+            }
             pause_active = 0;          // Wake up
             state = RobotState::STAY;  // Ready to move again
         }
@@ -605,8 +636,9 @@ void run(int ms) {
                             waypoint_path = p.waypoints;
                             current_waypoint_idx = 0;
                             travel_start_time = sim_clock;
-                            LOG("Computed path to Task %d (%d steps)\n", current_task_id,
-                                (int)waypoint_path.size());
+                            LOG("Computed %zu-step path to Task %d @(%f, %f), from my position @(%f, %f)\n",
+                                waypoint_path.size(), current_task_id, goal.x, goal.y, my_pos[0],
+                                my_pos[1]);
                         } else {
                             // Path generation failed (unreachable? bug?). Drop task.
                             LOG("Pathfinding failed for Task %d. Dropping.\n", current_task_id);
@@ -638,7 +670,7 @@ void run(int ms) {
                             // 3. Update Local World State
                             int idx = get_task_index(current_task_id);
                             if (idx != -1) {
-                                world_state[idx].isCompleted = true;
+                                world_state[idx].isBeingCompleted = true;  // Not fully complete yet!
 
                                 // 4. Start "Working" Pause
                                 int task_duration =
@@ -647,20 +679,25 @@ void run(int ms) {
                                 pause_active = 1;
                                 battery_time_used += task_duration;  // Add task cost
 
-                                LOG("Task %d DONE. Working for %dms.\n", current_task_id, task_duration);
+                                LOG("Arrived at Task %d @(%f, %f). Will be completed in %dms.\n",
+                                    current_task_id, world_state[idx].pos.x, world_state[idx].pos.y,
+                                    task_duration);
                             }
 
-                            // 5. Broadcast COMPLETION Message
-                            // Crucial: Tell neighbors this task is gone so they stop bidding on it.
-                            RobotStateMsg done_msg;
-                            done_msg.robotId = robot_id;
-                            done_msg.currentTaskId = current_task_id;
-                            done_msg.currentBid = 0;  // Bid irrelevant for completion
-                            done_msg.isTaskComplete = true;
+                            // 5. Broadcast "BEING COMPUTED" Message
+                            // Tell neighbors this task is being worked on so they stop bidding.
+                            // Note: We do NOT send isTaskComplete=true yet - that comes after pause.
+                            RobotStateMsg working_msg;
+                            working_msg.robotId = robot_id;
+                            working_msg.currentTaskId = current_task_id;
+                            working_msg.currentBid = 0;  // Bid irrelevant now
+                            working_msg.isTaskBeingCompleted = true;
+                            working_msg.isTaskComplete = false;  // Not complete yet!
                             wb_emitter_set_channel(emitter_tag, WB_CHANNEL_BROADCAST);
-                            wb_emitter_send(emitter_tag, &done_msg, sizeof(done_msg));
+                            wb_emitter_send(emitter_tag, &working_msg, sizeof(working_msg));
 
-                            // 6. Reset for next loop
+                            // 6. Store task ID for completion broadcast after pause
+                            last_completed_task_id = current_task_id;
                             current_task_id = -1;
                             waypoint_path.clear();
                             state = RobotState::STAY;
