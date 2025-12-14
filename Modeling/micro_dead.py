@@ -8,13 +8,13 @@ import matplotlib.pyplot as plt
 DT = 0.064
 
 # --- MOVEMENT & WORK ---
-AVG_TRAVEL_TIME = 15
+AVG_TRAVEL_TIME = 8
 #4.65+1.64 # Sum of travel, obstacle avoid, and average work times 
 TIME_ROBOTA = 3  
 TIME_ROBOTB = 1   
 
 # --- BIDDING MECHANISM ---
-TIME_IDLE_PER_TASK=7.27
+TIME_IDLE_PER_TASK=3
 
 #calculate the probability to end up as the time idle per task, given dt
 BID_PROBABILITY = DT / TIME_IDLE_PER_TASK
@@ -175,34 +175,53 @@ def main():
     
     time_axis = np.linspace(0, SIM_DURATION, steps)
 
+    # --- Print Final Metrics ---
+    print("\n" + "=" * 40)
+    print("       FINAL METRICS")
+    print("=" * 40)
+    print(f"Avg Active Robots:     {np.mean(mean_active):.2f} ± {np.mean(std_active):.2f}")
+    print(f"Total Tasks Completed: {mean_tasks[-1]:.1f} ± {std_tasks[-1]:.1f}")
+    print(f"Avg Dead Robots:       {np.mean(mean_dead):.2f}")
+    print("=" * 40 + "\n")
+
     # ==========================================
     # 5. PLOTTING
     # ==========================================
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10), sharex=True)
+    fig, ax1 = plt.subplots(figsize=(10, 6))
 
-    # Plot 1: Active vs Dead Robots
+    # Plot 1: Active Robots (left y-axis)
     ax1.plot(time_axis, mean_active, label='Active Robots', color='blue', linewidth=2)
-    ax1.fill_between(time_axis, mean_active - std_active, mean_active + std_active, color='blue', alpha=0.2)
-            
-    ax1.set_ylabel('Robot Count')
-    ax1.set_title('Metric 1: Robot Activity & Attrition')
-    ax1.grid(True, linestyle='--', alpha=0.6)
-    ax1.legend(loc='center right')
-    
-    # Set x-limits for the top plot (technically shared, but being explicit)
+    ax1.fill_between(time_axis, mean_active - std_active, mean_active + std_active, 
+                     color='blue', alpha=0.1, label='StdDev (Active)')
+    #ax1.plot(time_axis, mean_dead, label='Dead Robots', color='red', linestyle='--', linewidth=2)
+    ax1.legend(loc='lower center')
+    ax1.set_xlabel('Time (s)')
+    ax1.set_ylabel('Robot Count', color='blue')
+    ax1.tick_params(axis='y', labelcolor='blue')
+    ax1.set_ylim(0, NUM_ROBOTS + 0.5)
     ax1.set_xlim(0, SIM_DURATION)
-
-    # Plot 2: Cumulative Tasks
-    ax2.plot(time_axis, mean_tasks, label='Tasks Completed', color='green', linewidth=2)
-    ax2.fill_between(time_axis, mean_tasks - std_tasks, mean_tasks + std_tasks, color='green', alpha=0.2)
-    ax2.set_ylabel('Total Tasks')
-    ax2.set_xlabel('Time (seconds)')
-    ax2.set_title('Metric 2: Cumulative Tasks Completed')
-    ax2.grid(True, linestyle='--', alpha=0.6)
-    ax2.legend(loc='lower right')
     
-    # Set x-limits for the bottom plot
-    ax2.set_xlim(0, SIM_DURATION)
+    # Add textbox with metrics
+    textstr_active = f'Active Robots\nAvg: {np.mean(mean_active):.2f} ± {np.mean(std_active):.2f}\nDead Robots (end): {mean_dead[-1]:.1f}'
+    props = dict(boxstyle='round', facecolor='wheat', alpha=0.8)
+    ax1.text(0.02, 0.98, textstr_active, transform=ax1.transAxes, fontsize=10,
+             verticalalignment='top', bbox=props)
+
+    # Plot 2: Completed Tasks (right y-axis)
+    ax2 = ax1.twinx()
+    ax2.plot(time_axis, mean_tasks, label='Tasks Completed', color='green', linewidth=2)
+    ax2.fill_between(time_axis, mean_tasks - std_tasks, mean_tasks + std_tasks, 
+                     color='green', alpha=0.1, label='StdDev (Tasks)')
+    ax2.set_ylabel('Total Completed Tasks', color='green')
+    ax2.tick_params(axis='y', labelcolor='green')
+    ax2.set_title(f'Microscopic Model with Battery Limit ({MAX_BATTERY_LIFE}s)')
+    ax2.legend(loc='lower right')
+    ax2.grid(True, alpha=0.3)
+    
+    # Add textbox with metrics
+    textstr_tasks = f'Completed Tasks\nTotal: {mean_tasks[-1]:.1f} ± {std_tasks[-1]:.1f}'
+    ax2.text(0.7, 0.98, textstr_tasks, transform=ax2.transAxes, fontsize=10,
+             verticalalignment='top', bbox=props)
 
     plt.tight_layout()
     print("Displaying plots...")
