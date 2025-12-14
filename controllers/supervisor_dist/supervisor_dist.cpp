@@ -280,30 +280,36 @@ class Supervisor {
             const void* data = wb_receiver_get_data(receivers_[0]);
             size_t size = wb_receiver_get_data_size(receivers_[0]);
 
-            if (size == sizeof(RobotStateMsg)) {
-                RobotStateMsg msg;
-                memcpy(&msg, data, sizeof(RobotStateMsg));
+            // Use msgType discriminator instead of size
+            if (size >= sizeof(RobotMsgType)) {
+                RobotMsgType msgType;
+                memcpy(&msgType, data, sizeof(RobotMsgType));
 
-                if (msg.isTaskComplete) {
-                    // Find the event
-                    for (auto& event : events_) {
-                        if (event->id_ == msg.currentTaskId && !event->isDone()) {
-                            LOG("Robot %d reported completion of Task %d.\n", msg.robotId,
-                                msg.currentTaskId);
+                if (msgType == ROBOT_MSG_STATE && size >= sizeof(RobotStateMsg)) {
+                    RobotStateMsg msg;
+                    memcpy(&msg, data, sizeof(RobotStateMsg));
 
-                            // Calculate battery usage for time spent at the task completing it
-                            int timeAtTask = 0;
-                            if (msg.robotId <= 1) {  // A-specialist (robots 0, 1)
-                                timeAtTask = (event->type_ == TASK_TYPE_A) ? 3000 : 5000;
-                            } else {  // B-specialist (robots 2, 3, 4)
-                                timeAtTask = (event->type_ == TASK_TYPE_A) ? 9000 : 1000;
+                    if (msg.isTaskComplete) {
+                        // Find the event
+                        for (auto& event : events_) {
+                            if (event->id_ == msg.currentTaskId && !event->isDone()) {
+                                LOG("Robot %d reported completion of Task %d.\n", msg.robotId,
+                                    msg.currentTaskId);
+
+                                // Calculate battery usage for time spent at the task completing it
+                                int timeAtTask = 0;
+                                if (msg.robotId <= 1) {  // A-specialist (robots 0, 1)
+                                    timeAtTask = (event->type_ == TASK_TYPE_A) ? 3000 : 5000;
+                                } else {  // B-specialist (robots 2, 3, 4)
+                                    timeAtTask = (event->type_ == TASK_TYPE_A) ? 9000 : 1000;
+                                }
+                                robotBatteryUsed[msg.robotId] += timeAtTask;
+
+                                numEventsHandled++;
+                                event->markDone(clock_, msg.robotId);
+                                numActiveEvents_--;
+                                break;
                             }
-                            robotBatteryUsed[msg.robotId] += timeAtTask;
-
-                            numEventsHandled++;
-                            event->markDone(clock_, msg.robotId);
-                            numActiveEvents_--;
-                            break;
                         }
                     }
                 }

@@ -199,10 +199,8 @@ static void receive_updates() {
         const void* data = wb_receiver_get_data(receiver_tag);
         size_t size = wb_receiver_get_data_size(receiver_tag);
 
-        // Determine message type by size (hacky but standard in simple Webots sims)
-        // OR rely on message structure.
-
         // CASE A: Supervisor Message (Global State / GPS)
+        // MessageT is a different size from robot messages, so check size first
         if (size == sizeof(MessageT)) {
             MessageT msg;
             memcpy(&msg, data, sizeof(MessageT));
@@ -253,52 +251,57 @@ static void receive_updates() {
                     }
                 }
             }
-        }  // CASE B: Neighbor Robot Message (RobotStateMsg)
-        else if (size == sizeof(RobotStateMsg)) {
-            RobotStateMsg msg;
-            memcpy(&msg, data, sizeof(RobotStateMsg));
+        }  // CASE B: Neighbor Robot Message (RobotStateMsg) - use msgType discriminator
+        else if (size >= sizeof(RobotMsgType)) {
+            RobotMsgType msgType;
+            memcpy(&msgType, data, sizeof(RobotMsgType));
 
-            // This is where Distributed Conflict Resolution happens
-            int idx = get_task_index(msg.currentTaskId);
-            if (idx != -1) {
-                // 1. Update completion status
-                if (msg.isTaskComplete) {
-                    // Task is fully complete
-                    world_state[idx].isCompleted = true;
-                    world_state[idx].isBeingCompleted = false;
-                    if (current_task_id == msg.currentTaskId) {
-                        // Someone finished my task! Stop.
-                        current_task_id = -1;
-                        target_valid = false;
-                    }
-                } else if (msg.isTaskBeingCompleted) {
-                    // Task is being worked on (robot arrived, working on it)
-                    world_state[idx].isBeingCompleted = true;
-                    if (current_task_id == msg.currentTaskId) {
-                        // Someone is handling my task! Stop.
-                        current_task_id = -1;
-                        target_valid = false;
-                    }
-                }
-                // 2. Conflict Resolution (only if not being worked on or completed)
-                else if (!world_state[idx].isCompleted && !world_state[idx].isBeingCompleted) {
-                    // If neighbor claims this task with a BETTER bid
-                    if (msg.currentBid < world_state[idx].bestBidSeen) {
-                        world_state[idx].assignedRobotId = msg.robotId;
-                        world_state[idx].bestBidSeen = msg.currentBid;
+            if (msgType == ROBOT_MSG_STATE && size >= sizeof(RobotStateMsg)) {
+                RobotStateMsg msg;
+                memcpy(&msg, data, sizeof(RobotStateMsg));
 
-                        // If *I* was targeting this, I must yield
+                // This is where Distributed Conflict Resolution happens
+                int idx = get_task_index(msg.currentTaskId);
+                if (idx != -1) {
+                    // 1. Update completion status
+                    if (msg.isTaskComplete) {
+                        // Task is fully complete
+                        world_state[idx].isCompleted = true;
+                        world_state[idx].isBeingCompleted = false;
                         if (current_task_id == msg.currentTaskId) {
-                            LOG("Yielding Task %d @(%f, %f) to Robot %d (Bid %.2f vs %.2f)\n",
-                                msg.currentTaskId, world_state[idx].pos.x, world_state[idx].pos.y,
-                                msg.robotId, msg.currentBid, current_bid_val);
+                            // Someone finished my task! Stop.
                             current_task_id = -1;
                             target_valid = false;
-                            // allocate_task() will run next loop and pick a new one
+                        }
+                    } else if (msg.isTaskBeingCompleted) {
+                        // Task is being worked on (robot arrived, working on it)
+                        world_state[idx].isBeingCompleted = true;
+                        if (current_task_id == msg.currentTaskId) {
+                            // Someone is handling my task! Stop.
+                            current_task_id = -1;
+                            target_valid = false;
+                        }
+                    }
+                    // 2. Conflict Resolution (only if not being worked on or completed)
+                    else if (!world_state[idx].isCompleted && !world_state[idx].isBeingCompleted) {
+                        // If neighbor claims this task with a BETTER bid
+                        if (msg.currentBid < world_state[idx].bestBidSeen) {
+                            world_state[idx].assignedRobotId = msg.robotId;
+                            world_state[idx].bestBidSeen = msg.currentBid;
+
+                            // If *I* was targeting this, I must yield
+                            if (current_task_id == msg.currentTaskId) {
+                                LOG("Yielding Task %d @(%f, %f) to Robot %d (Bid %.2f vs %.2f)\n",
+                                    msg.currentTaskId, world_state[idx].pos.x, world_state[idx].pos.y,
+                                    msg.robotId, msg.currentBid, current_bid_val);
+                                current_task_id = -1;
+                                target_valid = false;
+                                // allocate_task() will run next loop and pick a new one
+                            }
                         }
                     }
                 }
-            }
+            }  // end if (msgType == ROBOT_MSG_STATE)
         }
         wb_receiver_next_packet(receiver_tag);
     }
@@ -306,6 +309,7 @@ static void receive_updates() {
     // We broadcast every time step. In a real system, we might do it less,
     // but in simulation, it ensures rapid conflict resolution.
     RobotStateMsg my_msg;
+    my_msg.msgType = ROBOT_MSG_STATE;
     my_msg.robotId = robot_id;
 
     if (pause_active && last_completed_task_id != -1) {
@@ -574,6 +578,7 @@ void run(int ms) {
     // This allows neighbors to know if they should yield to us.
     if (current_task_id != -1) {
         RobotStateMsg msg;
+        msg.msgType = ROBOT_MSG_STATE;
         msg.robotId = robot_id;
         msg.currentTaskId = current_task_id;
         msg.currentBid = current_bid_val;
@@ -595,6 +600,7 @@ void run(int ms) {
             // Task is NOW actually complete - broadcast completion to supervisor
             if (last_completed_task_id != -1) {
                 RobotStateMsg done_msg;
+                done_msg.msgType = ROBOT_MSG_STATE;
                 done_msg.robotId = robot_id;
                 done_msg.currentTaskId = last_completed_task_id;
                 done_msg.currentBid = 0;
@@ -688,6 +694,7 @@ void run(int ms) {
                             // Tell neighbors this task is being worked on so they stop bidding.
                             // Note: We do NOT send isTaskComplete=true yet - that comes after pause.
                             RobotStateMsg working_msg;
+                            working_msg.msgType = ROBOT_MSG_STATE;
                             working_msg.robotId = robot_id;
                             working_msg.currentTaskId = current_task_id;
                             working_msg.currentBid = 0;  // Bid irrelevant now

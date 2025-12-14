@@ -26,6 +26,9 @@ enum MessageType : int {
     MSG_QUIT
 };
 
+// Robot -> Supervisor/Other Robots message types
+enum RobotMsgType : uint16_t { ROBOT_MSG_BID = 1, ROBOT_MSG_STATE = 2 };
+
 // Message sent from Supervisor -> Robot
 struct MessageT {
     uint16_t robotId;  // Target ID
@@ -47,6 +50,7 @@ struct MessageT {
 
 // Message sent from Robot -> Supervisor
 struct BidT {
+    RobotMsgType msgType = ROBOT_MSG_BID;  // Discriminator field
     uint16_t robotId;
     uint16_t eventId;
     double bidValue;  // Estimated cost/time
@@ -54,6 +58,7 @@ struct BidT {
 };
 
 struct RobotStateMsg {
+    RobotMsgType msgType = ROBOT_MSG_STATE;  // Discriminator field
     uint16_t robotId;
     uint16_t currentTaskId;     // ID of the task I am currently trying to do
     double currentBid;          // My cost for this task

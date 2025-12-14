@@ -60,49 +60,15 @@ uint64_t g_simTime = 0;
 WbNodeRef g_eventNodes[MAX_EVENTS];
 vector<WbNodeRef> g_eventNodesFree;
 
-// Test function to verify interior wall detection
-void testInteriorWallDetection() {
-    printf("\n=== Testing Interior Wall Detection ===\n");
-
-    // Test points that should be INSIDE walls
-    Point2d inside_bijc = {0.125, 0.0};   // Middle of vertical wall BIJC
-    Point2d inside_efhg = {-0.395, 0.0};  // Middle of horizontal wall EFHG
-
-    // Test points that should be OUTSIDE walls
-    Point2d outside_1 = {0.3, 0.3};    // Top right
-    Point2d outside_2 = {-0.4, -0.4};  // Bottom left
-    Point2d outside_3 = {0.0, 0.0};    // Center
-
-    printf("Testing INSIDE points (should be rejected):\n");
-    printf("  (0.125, 0.0) in wall: %s\n", MapConfig::isPointInInteriorWall(inside_bijc) ? "YES" : "NO");
-    printf("  (-0.395, 0.0) in wall: %s\n", MapConfig::isPointInInteriorWall(inside_efhg) ? "YES" : "NO");
-
-    printf("Testing OUTSIDE points (should be accepted):\n");
-    printf("  (0.3, 0.3) in wall: %s\n", MapConfig::isPointInInteriorWall(outside_1) ? "YES" : "NO");
-    printf("  (-0.4, -0.4) in wall: %s\n", MapConfig::isPointInInteriorWall(outside_2) ? "YES" : "NO");
-    printf("  (0.0, 0.0) in wall: %s\n", MapConfig::isPointInInteriorWall(outside_3) ? "YES" : "NO");
-
-    printf("=== Interior Wall Test Complete ===\n\n");
-}
-
-double gauss(void) {
-    double x1, x2, w;
-    do {
-        x1 = 2.0 * utils::random_01() - 1.0;
-        x2 = 2.0 * utils::random_01() - 1.0;
-        w = x1 * x1 + x2 * x2;
-    } while (w >= 1.0);
-
-    w = sqrt((-2.0 * log(w)) / w);
-    return (x1 * w);
-}
-
 Point2d randCoord() {
     // Sample uniformly within the arena bounds defined by the pathfinding graph
-    // Arena bounds: x in [-0.575, 0.575], y in [-0.575, 0.575]
-    // Excludes points inside interior walls
-    const double ARENA_MIN = -0.575;
-    const double ARENA_MAX = 0.575;
+    // Visibilty graph x in [-0.58, 0.58], y in [-0.58, 0.58]
+    // Use a padding of 0.02 to avoid spawning exactly on walls
+    double padding = 0.02;
+    const double ARENA_MIN = -0.58 + padding;
+    const double ARENA_MAX = 0.58 - padding;
+    // => Spawn bounds: x in [-0.56, 0.56], y in [-0.56, 0.56]
+    // ^ for outer walls - interior walls are handled by rejection sampling below, with same padding
 
     Point2d candidate;
     int attempts = 0;
@@ -110,7 +76,7 @@ Point2d randCoord() {
         candidate.x = ARENA_MIN + (ARENA_MAX - ARENA_MIN) * utils::random_01();
         candidate.y = ARENA_MIN + (ARENA_MAX - ARENA_MIN) * utils::random_01();
         attempts++;
-    } while (MapConfig::isPointInInteriorWall(candidate));
+    } while (MapConfig::isPointInInteriorWall(candidate, padding));
 
     return candidate;
 }
@@ -359,30 +325,46 @@ class Supervisor {
         return wb_supervisor_field_set_sf_vec3f(f_pos, pos);
     }
 
-    // Marks one event as done, if one of the robots is within the range
+    // Marks one event as done when receiving completion message from robot
     void markEventsDone(EventQueueT& eventQueue) {
-        for (auto& event : events_) {
-            if (!event->isAssigned() || event->isDone()) continue;
+        // Note: This function processes RobotStateMsg messages from robots.
+        // BidT messages are handled separately in the bid handler within step().
+        // We process ALL messages here since we're called first, and only act on RobotStateMsg.
+        // BidT messages are processed by the bid handler which runs after this.
+        for (int i = 0; i < NUM_ROBOTS; i++) {
+            // Check if we're receiving data
+            while (wb_receiver_get_queue_length(receivers_[i]) > 0) {
+                const void* data = wb_receiver_get_data(receivers_[i]);
+                size_t size = wb_receiver_get_data_size(receivers_[i]);
 
-            Point2d currentRobotPos = getRobotPos(event->assignedTo_);
-            double dist = event->pos_.distanceTo(currentRobotPos);
+                if (size == sizeof(RobotStateMsg)) {
+                    RobotStateMsg msg;
+                    memcpy(&msg, data, sizeof(RobotStateMsg));
 
-            if (dist <= EVENT_RANGE) {
-                LOG("Robot %d reached event %d\n", event->assignedTo_, event->id_);
+                    // Check if event is valid
+                    if (msg.currentTaskId >= 0 && msg.currentTaskId < (int)events_.size()) {
+                        Event* event = events_.at(msg.currentTaskId).get();
+                        // Check if event is assigned to this robot and not already done
+                        if (event->isAssigned() && event->assignedTo_ == i && !event->isDone()) {
+                            // Mark event as done
+                            event->markDone(clock_);
+                            numActiveEvents_--;
+                            numEventsHandled++;
+                            LOG("Robot %d completed event %d (total completed: %d)\n", i, event->id_,
+                                numEventsHandled);
 
-                // Calculate battery usage for time spent at the task completing it
-                int timeAtTask = 0;
-                if (event->assignedTo_ <= 1) {  // A-specialist (robots 0, 1)
-                    timeAtTask = (event->type_ == TASK_TYPE_A) ? 3000 : 5000;
-                } else {  // B-specialist (robots 2, 3, 4)
-                    timeAtTask = (event->type_ == TASK_TYPE_A) ? 9000 : 1000;
+                            // Queue up a MSG_EVENT_DONE message to be sent to the robot
+                            // eventQueue.emplace_back(event, MSG_EVENT_DONE);  <-- No longer needed
+
+                            // Add a new event to maintain constant number of active events
+                            addEvent();
+                        }
+                    } else {
+                        LOG("Warning: Robot %d reported completion of invalid event %d\n", i,
+                            msg.currentTaskId);
+                    }
                 }
-                robotBatteryUsed[event->assignedTo_] += timeAtTask;
-
-                numEventsHandled++;
-                event->markDone(clock_);
-                numActiveEvents_--;
-                eventQueue.emplace_back(event.get(), MSG_EVENT_DONE);
+                wb_receiver_next_packet(receivers_[i]);
             }
         }
     }
@@ -533,7 +515,9 @@ class Supervisor {
         // Events that will be announced next or that have just been assigned/done
         EventQueueT eventQueue;
 
-        markEventsDone(eventQueue);
+        // NOTE: Removed markEventsDone(eventQueue) call - it was consuming ALL messages
+        // from the receiver queue (including BidT messages) and discarding them.
+        // All message processing now happens in the unified loop below.
 
         // ** Add a random new event, if the time has come
         assert(timeOfNextEvent > 0);
@@ -543,26 +527,74 @@ class Supervisor {
 
         handleAuctionEvents(eventQueue);
 
-        // Send and receive messages
-        BidT* pbid;  // inbound
+        // Process incoming messages from robots (bids and task completion notifications)
         for (int i = 0; i < NUM_ROBOTS; i++) {
-            // Check if we're receiving data
-            if (wb_receiver_get_queue_length(receivers_[i]) > 0) {
-                assert(wb_receiver_get_queue_length(receivers_[i]) > 0);
-                assert(wb_receiver_get_data_size(receivers_[i]) == sizeof(BidT));
+            while (wb_receiver_get_queue_length(receivers_[i]) > 0) {
+                const void* data = wb_receiver_get_data(receivers_[i]);
+                size_t size = wb_receiver_get_data_size(receivers_[i]);
 
-                pbid = (BidT*)wb_receiver_get_data(receivers_[i]);
-                assert(pbid->robotId == i);
+                // Read the message type discriminator (first field in both BidT and RobotStateMsg)
+                if (size >= sizeof(RobotMsgType)) {
+                    RobotMsgType msgType;
+                    memcpy(&msgType, data, sizeof(RobotMsgType));
 
-                Event* event = events_.at(pbid->eventId).get();
-                event->updateAuction(pbid->robotId, pbid->bidValue, pbid->eventIndex);
-                // TODO: Refactor this (same code above in handleAuctionEvents)
-                if (event->isAssigned()) {
-                    eventQueue.emplace_back(event, MSG_EVENT_WON);
-                    auction = NULL;
-                    LOG("Robot %d won event %d\n", event->assignedTo_, event->id_);
+                    if (msgType == ROBOT_MSG_BID && size >= sizeof(BidT)) {
+                        // Process bid message
+                        BidT bid;
+                        memcpy(&bid, data, sizeof(BidT));
+                        LOG("Received BidT from robot %d: eventId=%d, bidValue=%.4f, eventIndex=%d\n",
+                            bid.robotId, bid.eventId, bid.bidValue, bid.eventIndex);
+                        assert(bid.robotId == i);
+
+                        Event* event = events_.at(bid.eventId).get();
+                        event->updateAuction(bid.robotId, bid.bidValue, bid.eventIndex);
+                        if (event->isAssigned()) {
+                            eventQueue.emplace_back(event, MSG_EVENT_WON);
+                            auction = NULL;
+                            LOG("Robot %d won event %d\n", event->assignedTo_, event->id_);
+                        }
+                    } else if (msgType == ROBOT_MSG_STATE && size >= sizeof(RobotStateMsg)) {
+                        // Process task completion message
+                        RobotStateMsg msg;
+                        memcpy(&msg, data, sizeof(RobotStateMsg));
+
+                        LOG("Received RobotStateMsg from robot %d: currentTaskId=%d, isTaskComplete=%d, "
+                            "isTaskBeingCompleted=%d\n",
+                            msg.robotId, msg.currentTaskId, msg.isTaskComplete, msg.isTaskBeingCompleted);
+                        if (msg.isTaskComplete) {
+                            // Find the event and mark it done
+                            for (auto& event : events_) {
+                                if (event->id_ == msg.currentTaskId && !event->isDone()) {
+                                    LOG("Robot %d reported completion of Task %d.\n", msg.robotId,
+                                        msg.currentTaskId);
+
+                                    // Calculate battery usage for time spent at the task
+                                    int timeAtTask = 0;
+                                    if (msg.robotId <= 1) {  // A-specialist (robots 0, 1)
+                                        timeAtTask = (event->type_ == TASK_TYPE_A) ? 3000 : 5000;
+                                    } else {  // B-specialist (robots 2, 3, 4)
+                                        timeAtTask = (event->type_ == TASK_TYPE_A) ? 9000 : 1000;
+                                    }
+                                    robotBatteryUsed[msg.robotId] += timeAtTask;
+
+                                    numEventsHandled++;
+                                    event->markDone(clock_);
+                                    numActiveEvents_--;
+
+                                    // Add a new event to maintain constant number of active events
+                                    addEvent();
+                                    break;
+                                }
+                            }
+                        } else if (msg.isTaskBeingCompleted) {
+                            // isTaskBeingCompleted doesn't require supervisor action
+                            LOG("Robot %d is completing Task %d.\n", msg.robotId, msg.currentTaskId);
+                        }
+                    } else {
+                        LOG("Warning: Unknown message type %d or size mismatch (size=%zu) from robot %d\n",
+                            msgType, size, i);
+                    }
                 }
-
                 wb_receiver_next_packet(receivers_[i]);
             }
         }
