@@ -60,11 +60,11 @@ vector<WbNodeRef> g_eventNodesFree;
 Point2d randCoord() {
     // Sample uniformly within the arena bounds defined by the pathfinding graph
     // Visibilty graph x in [-0.58, 0.58], y in [-0.58, 0.58]
-    // Use a padding of 0.01 to avoid spawning exactly on walls
+    // Use a padding of 0.02 to avoid spawning exactly on walls
     double padding = 0.02;
     const double ARENA_MIN = -0.58 + padding;
     const double ARENA_MAX = 0.58 - padding;
-    // => Spawn bounds: x in [-0.57, 0.57], y in [-0.57, 0.57]
+    // => Spawn bounds: x in [-0.56, 0.56], y in [-0.56, 0.56]
     // ^ for outer walls - interior walls are handled by rejection sampling below, with same padding
 
     Point2d candidate;
