@@ -32,6 +32,10 @@
 WbDeviceTag left_motor;   // handler for left wheel of the robot
 WbDeviceTag right_motor;  // handler for the right wheel of the robot
 
+// Enable or disable logging
+#define ENABLE_LOGGING 0  // Set to 1 to enable logging, 0 to disable
+
+#if ENABLE_LOGGING
 // Logging macro, configured with prefix "[Robot {ID} @ t={TIME}ms] "
 #define LOG(fmt, ...)                                                                  \
     do {                                                                               \
@@ -39,6 +43,11 @@ WbDeviceTag right_motor;  // handler for the right wheel of the robot
         snprintf(prefix, sizeof(prefix), "[Robot %d @ t=%dms] ", robot_id, sim_clock); \
         logMsg(prefix, fmt, ##__VA_ARGS__);                                            \
     } while (0)
+#else
+#define LOG(fmt, ...) \
+    do {              \
+    } while (0)
+#endif
 
 enum class RobotState {
     STAY = 1,

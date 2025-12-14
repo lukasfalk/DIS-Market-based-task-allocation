@@ -1,11 +1,7 @@
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
- * file:        auct_super.cc
- * author:
- * description: Supervisor for market-based task allocation (DIS lab05)
- *
- * $Revision$	February 2016 by Florian Maushart
- * $Date$
- * $Author$   Last update 2024 by Wanting Jin
+ * file:        supervisor_cent.cpp
+ * description: Supervisor for Part 1 (Centralized).
+ *              Assigns tasks to robots based on received bids.
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 #include <assert.h>
@@ -34,6 +30,10 @@ using namespace std;
 
 uint64_t g_simTime = 0;
 
+// Enable or disable logging
+#define ENABLE_LOGGING 0  // Set to 1 to enable logging, 0 to disable
+
+#if ENABLE_LOGGING
 // Logging macro, configured with prefix "[Supervisor @ t={TIME}ms] "
 #define LOG(fmt, ...)                                                                                \
     do {                                                                                             \
@@ -41,6 +41,11 @@ uint64_t g_simTime = 0;
         snprintf(prefix, sizeof(prefix), "[Supervisor @ t=%llums] ", (unsigned long long)g_simTime); \
         logMsg(prefix, fmt, ##__VA_ARGS__);                                                          \
     } while (0)
+#else
+#define LOG(fmt, ...) \
+    do {              \
+    } while (0)
+#endif
 
 #define AUCTION_TIMEOUT 1000  // number of steps after which an auction stops
 
@@ -652,8 +657,8 @@ class Supervisor {
             double ehr = ((double)numEventsHandled) / clock_s;
             double perf = ((double)numEventsHandled) / statTotalDistance;
 
-            LOG("Handled %d events in %d seconds, events handled per second = %.2f\n", numEventsHandled,
-                (int)clock_ / 1000, ehr);
+            printf("Handled %d events in %d seconds (= %.2f /s)\n", numEventsHandled, (int)clock_ / 1000,
+                   ehr);
 
             // print proximity matrix (seconds)
             LOG("*********PROXIMTY TO OTHER ROBOTS*********\n\n");

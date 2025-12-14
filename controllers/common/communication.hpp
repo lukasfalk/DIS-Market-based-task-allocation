@@ -59,12 +59,16 @@ struct BidT {
 
 struct RobotStateMsg {
     RobotMsgType msgType = ROBOT_MSG_STATE;  // Discriminator field
-    uint16_t robotId;
-    uint16_t currentTaskId;     // ID of the task I am currently trying to do
-    double currentBid;          // My cost for this task
-    bool isTaskBeingCompleted;  // True if I have arrived at the task and am working on it
-    bool isTaskComplete;        // True if I just finished this task
-    // Optional TODO: Add a hop-count if implementing multi-hop relay
+    uint16_t robotId;                        // Original sender
+    uint16_t currentTaskId;                  // ID of the task this message is about
+    double currentBid;                       // Sender's cost for this task
+    bool isTaskBeingCompleted;               // True if sender has arrived and is working on it
+    bool isTaskComplete;                     // True if sender just finished this task
+    uint8_t ttl;                             // Time-to-live for gossip relay (decremented each hop)
 };
+
+// Gossip protocol constants
+constexpr uint8_t GOSSIP_MAX_TTL = 8;       // Maximum hops a message can travel
+constexpr size_t GOSSIP_HISTORY_SIZE = 32;  // Number of recent messages to track (avoid duplicates)
 
 #endif  // COMMUNICATION_HPP

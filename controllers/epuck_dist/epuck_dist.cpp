@@ -31,6 +31,10 @@
 WbDeviceTag left_motor;   // handler for left wheel of the robot
 WbDeviceTag right_motor;  // handler for the right wheel of the robot
 
+// Enable or disable logging
+#define ENABLE_LOGGING 0  // Set to 1 to enable logging, 0 to disable
+
+#if ENABLE_LOGGING
 // Logging macro, configured with prefix "[Robot {ID} @ t={TIME}ms] "
 #define LOG(fmt, ...)                                                                  \
     do {                                                                               \
@@ -38,6 +42,11 @@ WbDeviceTag right_motor;  // handler for the right wheel of the robot
         snprintf(prefix, sizeof(prefix), "[Robot %d @ t=%dms] ", robot_id, sim_clock); \
         logMsg(prefix, fmt, ##__VA_ARGS__);                                            \
     } while (0)
+#else
+#define LOG(fmt, ...) \
+    do {              \
+    } while (0)
+#endif
 
 enum class RobotState {
     STAY = 1,
@@ -128,6 +137,59 @@ int get_my_queue_index(uint16_t task_id) {
     }
     return -1;
 }
+
+// ============================================================================
+// GOSSIP PROTOCOL: Multi-hop message relay for limited communication range
+// ============================================================================
+
+// Compact hash of a message for deduplication (avoids re-relaying same info)
+struct GossipKey {
+    uint16_t robotId;       // Original sender
+    uint16_t taskId;        // Task this is about
+    bool isComplete;        // Completion status (to distinguish completion from bids)
+    bool isBeingCompleted;  // Working status
+
+    bool operator==(const GossipKey& other) const {
+        return robotId == other.robotId && taskId == other.taskId && isComplete == other.isComplete &&
+               isBeingCompleted == other.isBeingCompleted;
+    }
+};
+
+// Circular buffer of recently seen/relayed messages to avoid duplicates
+std::array<GossipKey, GOSSIP_HISTORY_SIZE> gossip_history;
+size_t gossip_history_idx = 0;
+
+// Queue of messages to relay this tick (filled during receive, sent after processing)
+std::vector<RobotStateMsg> gossip_relay_queue;
+
+// Check if we've recently seen this message (and should skip relaying)
+bool gossip_already_seen(const GossipKey& key) {
+    for (const auto& entry : gossip_history) {
+        if (entry == key) return true;
+    }
+    return false;
+}
+
+// Record a message as seen (circular buffer)
+void gossip_mark_seen(const GossipKey& key) {
+    gossip_history[gossip_history_idx] = key;
+    gossip_history_idx = (gossip_history_idx + 1) % GOSSIP_HISTORY_SIZE;
+}
+
+// Queue a message for relay (will be sent at end of receive_updates)
+void gossip_queue_relay(const RobotStateMsg& msg) {
+    if (msg.ttl > 0 && msg.robotId != robot_id) {
+        GossipKey key = {msg.robotId, msg.currentTaskId, msg.isTaskComplete, msg.isTaskBeingCompleted};
+        if (!gossip_already_seen(key)) {
+            gossip_mark_seen(key);
+            RobotStateMsg relay_msg = msg;
+            relay_msg.ttl--;  // Decrement TTL for next hop
+            gossip_relay_queue.push_back(relay_msg);
+        }
+    }
+}
+
+// ============================================================================
 
 // Return pause duration (ms) based on robot specialization and task type (customize as needed)
 static int get_pause_duration_ms(RobotSpec robot_specialization, TaskType task_type) {
@@ -453,6 +515,9 @@ static void receive_updates() {
                         }
                     }
                 }
+
+                // GOSSIP: Queue this message for relay to extend range
+                gossip_queue_relay(msg);
             }  // end if (msgType == ROBOT_MSG_STATE)
         }
         wb_receiver_next_packet(receiver_tag);
@@ -467,6 +532,7 @@ static void receive_updates() {
         my_msg.currentBid = 0.0;
         my_msg.isTaskBeingCompleted = true;
         my_msg.isTaskComplete = false;
+        my_msg.ttl = GOSSIP_MAX_TTL;  // Fresh message starts with max TTL
         wb_emitter_set_channel(emitter_tag, WB_CHANNEL_BROADCAST);
         wb_emitter_send(emitter_tag, &my_msg, sizeof(my_msg));
     }
@@ -480,9 +546,17 @@ static void receive_updates() {
         my_msg.currentBid = my_task_queue[i].myBid;
         my_msg.isTaskBeingCompleted = false;
         my_msg.isTaskComplete = false;
+        my_msg.ttl = GOSSIP_MAX_TTL;  // Fresh message starts with max TTL
         wb_emitter_set_channel(emitter_tag, WB_CHANNEL_BROADCAST);
         wb_emitter_send(emitter_tag, &my_msg, sizeof(my_msg));
     }
+
+    // 3. GOSSIP: Relay messages from other robots to extend communication range
+    for (const auto& relay_msg : gossip_relay_queue) {
+        wb_emitter_set_channel(emitter_tag, WB_CHANNEL_BROADCAST);
+        wb_emitter_send(emitter_tag, &relay_msg, sizeof(relay_msg));
+    }
+    gossip_relay_queue.clear();
 }
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
@@ -518,6 +592,13 @@ void reset(void) {
     world_state.clear();
     my_task_queue.clear();  // Clear the task queue
     waypoint_path.clear();
+
+    // Reset gossip protocol state
+    gossip_relay_queue.clear();
+    gossip_history_idx = 0;
+    for (auto& entry : gossip_history) {
+        entry = GossipKey{0, 0, false, false};
+    }
 
     // Start in the DEFAULT_STATE
     state = DEFAULT_STATE;
@@ -746,12 +827,13 @@ void run(int ms) {
                 done_msg.currentBid = 0;
                 done_msg.isTaskBeingCompleted = false;
                 done_msg.isTaskComplete = true;  // NOW it's truly complete
+                done_msg.ttl = GOSSIP_MAX_TTL;   // Fresh completion message with max TTL
 
                 // Send on DEDICATED channel to supervisor (guaranteed delivery regardless of emitter range)
                 wb_emitter_set_channel(emitter_tag, robot_id + 1);
                 wb_emitter_send(emitter_tag, &done_msg, sizeof(done_msg));
 
-                // Also broadcast to nearby neighbors
+                // Also broadcast to nearby neighbors (will be relayed via gossip)
                 wb_emitter_set_channel(emitter_tag, WB_CHANNEL_BROADCAST);
                 wb_emitter_send(emitter_tag, &done_msg, sizeof(done_msg));
 
@@ -847,6 +929,7 @@ void run(int ms) {
                             working_msg.currentBid = 0;  // Bid irrelevant now
                             working_msg.isTaskBeingCompleted = true;
                             working_msg.isTaskComplete = false;  // Not complete yet!
+                            working_msg.ttl = GOSSIP_MAX_TTL;    // Fresh message with max TTL
                             wb_emitter_set_channel(emitter_tag, WB_CHANNEL_BROADCAST);
                             wb_emitter_send(emitter_tag, &working_msg, sizeof(working_msg));
 
